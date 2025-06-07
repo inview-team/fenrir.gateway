@@ -122,7 +122,8 @@ func (b *Bot) handleHighSeverityIncident(chat *telebot.Chat, incident *models.In
 
 	// 2. Send the fully formatted message with keyboard directly to the topic.
 	message := b.formatIncidentMessage(incident, false)
-	keyboard := b.buildIncidentViewKeyboard(incident, false)
+	suggestedActions := b.suggester.SuggestActions(incident)
+	keyboard := b.buildActionsViewKeyboard(incident, suggestedActions, false)
 	topicSendOpts := &telebot.SendOptions{
 		ThreadID:              topic.ThreadID,
 		ParseMode:             telebot.ModeMarkdownV2,
@@ -185,7 +186,8 @@ func (b *Bot) startTopicDeletionListener(deletionChan <-chan *models.Incident) {
 func (b *Bot) handleLowSeverityIncident(chat *telebot.Chat, incident *models.Incident) {
 	// Send the fully formatted message with keyboard directly to the main channel.
 	message := b.formatIncidentMessage(incident, false)
-	keyboard := b.buildIncidentViewKeyboard(incident, false)
+	suggestedActions := b.suggester.SuggestActions(incident)
+	keyboard := b.buildActionsViewKeyboard(incident, suggestedActions, false)
 	sendOpts := &telebot.SendOptions{
 		ParseMode:             telebot.ModeMarkdownV2,
 		ReplyMarkup:           &telebot.ReplyMarkup{InlineKeyboard: keyboard},
@@ -258,7 +260,7 @@ func (b *Bot) handleListIncidents(c telebot.Context) error {
 	for _, inc := range incidents {
 		row := []telebot.InlineButton{{
 			Text: fmt.Sprintf("🚨 %s (%s)", inc.Summary, inc.Status),
-			Data: showActionsPrefix + strconv.FormatUint(uint64(inc.ID), 10),
+			Data: viewIncidentPrefix + strconv.FormatUint(uint64(inc.ID), 10),
 		}}
 		keyboard = append(keyboard, row)
 	}
