@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS audit_records;
+DROP TABLE IF EXISTS incidents;
+DROP TABLE IF EXISTS users;
