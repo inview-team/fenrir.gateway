@@ -129,6 +129,19 @@ func (m *MockIncidentRepository) SetTelegramTopicID(ctx context.Context, inciden
 	return nil
 }
 
+func (m *MockIncidentRepository) FindClosedBefore(ctx context.Context, t time.Time) ([]*models.Incident, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*models.Incident
+	for _, incident := range m.incidents {
+		if (incident.Status == models.StatusResolved || incident.Status == models.StatusRejected) && incident.EndsAt != nil && incident.EndsAt.Before(t) {
+			result = append(result, incident)
+		}
+	}
+	return result, nil
+}
+
 // seed заполняет репозиторий тестовыми данными.
 func (m *MockIncidentRepository) seed() {
 	incident1 := &models.Incident{

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"chatops-bot/internal/models"
 )
@@ -16,6 +17,7 @@ type IncidentRepository interface {
 	ListClosed(ctx context.Context, limit int, offset int) ([]*models.Incident, error)
 	SetTelegramMessageID(ctx context.Context, incidentID uint, chatID, messageID int64) error
 	SetTelegramTopicID(ctx context.Context, incidentID uint, topicID int64) error
+	FindClosedBefore(ctx context.Context, t time.Time) ([]*models.Incident, error)
 }
 
 // UserRepository определяет интерфейс для работы с пользователями.

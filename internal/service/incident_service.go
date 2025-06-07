@@ -14,23 +14,25 @@ import (
 
 // IncidentService предоставляет бизнес-логику для управления инцидентами.
 type IncidentService struct {
-	repo             IncidentRepository
-	userRepo         UserRepository
-	executor         ExecutorClient
-	suggester        *ActionSuggester
-	notificationChan chan<- *models.Incident // Канал для отправки уведомлений
-	updateChan       chan<- *models.Incident // Канал для отправки обновлений
+	repo              IncidentRepository
+	userRepo          UserRepository
+	executor          ExecutorClient
+	suggester         *ActionSuggester
+	notificationChan  chan<- *models.Incident // Канал для отправки уведомлений
+	updateChan        chan<- *models.Incident // Канал для отправки обновлений
+	topicDeletionChan chan<- *models.Incident // Канал для удаления топиков
 }
 
 // NewIncidentService создает новый экземпляр IncidentService.
-func NewIncidentService(repo IncidentRepository, userRepo UserRepository, executor ExecutorClient, suggester *ActionSuggester, notifChan, updateChan chan<- *models.Incident) *IncidentService {
+func NewIncidentService(repo IncidentRepository, userRepo UserRepository, executor ExecutorClient, suggester *ActionSuggester, notifChan, updateChan, topicDeletionChan chan<- *models.Incident) *IncidentService {
 	return &IncidentService{
-		repo:             repo,
-		userRepo:         userRepo,
-		executor:         executor,
-		suggester:        suggester,
-		notificationChan: notifChan,
-		updateChan:       updateChan,
+		repo:              repo,
+		userRepo:          userRepo,
+		executor:          executor,
+		suggester:         suggester,
+		notificationChan:  notifChan,
+		updateChan:        updateChan,
+		topicDeletionChan: topicDeletionChan,
 	}
 }
 
@@ -160,6 +162,23 @@ func (s *IncidentService) GetAvailableResources(ctx context.Context) (*models.Av
 	return s.executor.GetAvailableResources()
 }
 
+// DeleteOldIncidentTopics находит старые закрытые инциденты и инициирует удаление их топиков.
+func (s *IncidentService) DeleteOldIncidentTopics(ctx context.Context, retention time.Duration) {
+	threshold := time.Now().Add(-retention)
+	incidents, err := s.repo.FindClosedBefore(ctx, threshold)
+	if err != nil {
+		log.Printf("Error finding old incidents to delete topics: %v", err)
+		return
+	}
+
+	for _, incident := range incidents {
+		if incident.TelegramTopicID.Valid {
+			log.Printf("Scheduling topic deletion for incident #%d", incident.ID)
+			s.topicDeletionChan <- incident
+		}
+	}
+}
+
 // UpdateStatus изменяет статус инцидента и добавляет запись в лог аудита.
 func (s *IncidentService) UpdateStatus(ctx context.Context, userID, incidentID uint, status models.IncidentStatus, reason string) error {
 	incident, err := s.repo.FindByID(ctx, incidentID)
@@ -168,6 +187,11 @@ func (s *IncidentService) UpdateStatus(ctx context.Context, userID, incidentID u
 	}
 
 	incident.Status = status
+	now := time.Now()
+	if status == models.StatusResolved || status == models.StatusRejected {
+		incident.EndsAt = &now
+	}
+
 	if status == models.StatusResolved {
 		incident.ResolvedBy = &userID
 	}

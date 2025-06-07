@@ -31,7 +31,7 @@ func setupServerTest(t *testing.T) *serverTestKit {
 	incidentRepo := inmemory.NewMockIncidentRepository()
 	userRepo := inmemory.NewMockUserRepository()
 	// For server tests, we don't need a real executor or suggester
-	incidentService := service.NewIncidentService(incidentRepo, userRepo, nil, nil, make(chan *models.Incident, 1), make(chan *models.Incident, 1))
+	incidentService := service.NewIncidentService(incidentRepo, userRepo, nil, nil, make(chan *models.Incident, 1), make(chan *models.Incident, 1), make(chan *models.Incident, 1))
 
 	// We test the main API router here
 	router := newRouter(incidentService, userRepo)
@@ -79,7 +79,7 @@ func TestHandleAlertmanagerWebhook(t *testing.T) {
 		incidentRepo.Update(context.Background(), inc)
 	}
 
-	incidentService := service.NewIncidentService(incidentRepo, nil, nil, nil, make(chan *models.Incident, 1), make(chan *models.Incident, 1))
+	incidentService := service.NewIncidentService(incidentRepo, nil, nil, nil, make(chan *models.Incident, 1), make(chan *models.Incident, 1), make(chan *models.Incident, 1))
 	router := newAlertmanagerRouter(incidentService, "test-token")
 
 	webhookBody := models.AlertmanagerWebhookMessage{

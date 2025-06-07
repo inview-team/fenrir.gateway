@@ -2,6 +2,7 @@ package gorm
 
 import (
 	"context"
+	"time"
 
 	"chatops-bot/internal/models"
 	"chatops-bot/internal/service"
@@ -68,4 +69,12 @@ func (r *GormIncidentRepository) SetTelegramMessageID(ctx context.Context, incid
 
 func (r *GormIncidentRepository) SetTelegramTopicID(ctx context.Context, incidentID uint, topicID int64) error {
 	return r.db.WithContext(ctx).Model(&models.Incident{}).Where("id = ?", incidentID).Update("telegram_topic_id", topicID).Error
+}
+
+func (r *GormIncidentRepository) FindClosedBefore(ctx context.Context, t time.Time) ([]*models.Incident, error) {
+	var incidents []*models.Incident
+	err := r.db.WithContext(ctx).
+		Where("status IN (?, ?) AND ends_at < ?", models.StatusResolved, models.StatusRejected, t).
+		Find(&incidents).Error
+	return incidents, err
 }

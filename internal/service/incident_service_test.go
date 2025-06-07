@@ -15,13 +15,14 @@ import (
 )
 
 type testKit struct {
-	incidentRepo   service.IncidentRepository
-	userRepo       service.UserRepository
-	executorClient *mock.ExecutorClientMock
-	suggester      *service.ActionSuggester
-	service        *service.IncidentService
-	notifChan      chan *models.Incident
-	updateChan     chan *models.Incident
+	incidentRepo      service.IncidentRepository
+	userRepo          service.UserRepository
+	executorClient    *mock.ExecutorClientMock
+	suggester         *service.ActionSuggester
+	service           *service.IncidentService
+	notifChan         chan *models.Incident
+	updateChan        chan *models.Incident
+	topicDeletionChan chan *models.Incident
 }
 
 func setupService(t *testing.T) *testKit {
@@ -31,17 +32,19 @@ func setupService(t *testing.T) *testKit {
 	suggester := service.NewActionSuggester()
 	notifChan := make(chan *models.Incident, 1)
 	updateChan := make(chan *models.Incident, 1)
+	topicDeletionChan := make(chan *models.Incident, 1)
 
-	incidentService := service.NewIncidentService(incidentRepo, userRepo, executorClient, suggester, notifChan, updateChan)
+	incidentService := service.NewIncidentService(incidentRepo, userRepo, executorClient, suggester, notifChan, updateChan, topicDeletionChan)
 
 	return &testKit{
-		incidentRepo:   incidentRepo,
-		userRepo:       userRepo,
-		executorClient: executorClient,
-		suggester:      suggester,
-		service:        incidentService,
-		notifChan:      notifChan,
-		updateChan:     updateChan,
+		incidentRepo:      incidentRepo,
+		userRepo:          userRepo,
+		executorClient:    executorClient,
+		suggester:         suggester,
+		service:           incidentService,
+		notifChan:         notifChan,
+		updateChan:        updateChan,
+		topicDeletionChan: topicDeletionChan,
 	}
 }
 

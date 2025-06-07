@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"chatops-bot/internal/bot"
 	"chatops-bot/internal/executor/http"
@@ -77,10 +78,29 @@ func main() {
 	// Канал для уведомлений о новых инцидентах
 	notificationChan := make(chan *models.Incident, 10)
 	updateChan := make(chan *models.Incident, 10)
+	topicDeletionChan := make(chan *models.Incident, 10)
 
-	incidentService := service.NewIncidentService(incidentRepo, userRepo, executorClient, actionSuggester, notificationChan, updateChan)
+	incidentService := service.NewIncidentService(incidentRepo, userRepo, executorClient, actionSuggester, notificationChan, updateChan, topicDeletionChan)
 
 	var wg sync.WaitGroup
+
+	// --- Запуск фонового процесса для удаления старых топиков ---
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Для тестирования установим короткий интервал и время хранения
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Println("Running job to delete old incident topics...")
+				incidentService.DeleteOldIncidentTopics(context.Background(), 1*time.Minute)
+			case <-context.Background().Done(): // Предполагается, что контекст будет отменен при завершении работы
+				return
+			}
+		}
+	}()
 
 	// --- Запуск серверов и бота ---
 	appPort := getEnv("APP_PORT", "8080")
@@ -107,7 +127,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("Failed to create bot: %v", err)
 			}
-			telegramBot.Start(notificationChan, updateChan)
+			telegramBot.Start(notificationChan, updateChan, topicDeletionChan)
 		}()
 	}
 
