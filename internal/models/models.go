@@ -1,6 +1,7 @@
 package models
 
 import (
+	"database/sql"
 	"time"
 
 	"gorm.io/gorm"
@@ -42,6 +43,11 @@ type Incident struct {
 	ResolvedBy        *uint
 	ResolvedByUser    User `gorm:"foreignKey:ResolvedBy"`
 	RejectionReason   string
+
+	// Telegram-specific fields for message management
+	TelegramChatID    sql.NullInt64 `gorm:"index"`
+	TelegramMessageID sql.NullInt64 `gorm:"index"`
+	TelegramTopicID   sql.NullInt64 `gorm:"index"`
 }
 
 // AuditRecord хранит запись о действии, выполненном над инцидентом.

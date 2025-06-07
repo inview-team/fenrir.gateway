@@ -102,6 +102,16 @@ func (s *IncidentService) CreateIncidentFromAlert(ctx context.Context, alert mod
 	return incident, nil
 }
 
+// SetTelegramMessageID сохраняет идентификаторы сообщения Telegram для инцидента.
+func (s *IncidentService) SetTelegramMessageID(ctx context.Context, incidentID uint, chatID, messageID int64) error {
+	return s.repo.SetTelegramMessageID(ctx, incidentID, chatID, messageID)
+}
+
+// SetTelegramTopicID сохраняет идентификатор топика Telegram для инцидента.
+func (s *IncidentService) SetTelegramTopicID(ctx context.Context, incidentID uint, topicID int64) error {
+	return s.repo.SetTelegramTopicID(ctx, incidentID, topicID)
+}
+
 // ExecuteAction выполняет действие над инцидентом.
 func (s *IncidentService) ExecuteAction(ctx context.Context, req models.ActionRequest) (models.ActionResult, error) {
 	incident, err := s.repo.FindByID(ctx, req.IncidentID)

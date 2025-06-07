@@ -43,29 +43,31 @@ type userState struct {
 }
 
 type Bot struct {
-	bot          *telebot.Bot
-	service      *service.IncidentService
-	userRepo     service.UserRepository
-	suggester    *service.ActionSuggester
-	userStates   map[int64]*userState
-	mu           sync.RWMutex
-	viewRegistry map[uint]map[string]telebot.Editable
-	registryMu   sync.RWMutex
+	bot            *telebot.Bot
+	service        *service.IncidentService
+	userRepo       service.UserRepository
+	suggester      *service.ActionSuggester
+	userStates     map[int64]*userState
+	mu             sync.RWMutex
+	viewRegistry   map[uint]map[string]telebot.Editable
+	registryMu     sync.RWMutex
+	alertChannelID int64
 }
 
-func NewBot(token string, service *service.IncidentService, userRepo service.UserRepository, suggester *service.ActionSuggester) (*Bot, error) {
+func NewBot(token string, service *service.IncidentService, userRepo service.UserRepository, suggester *service.ActionSuggester, alertChannelID int64) (*Bot, error) {
 	pref := telebot.Settings{Token: token, Poller: &telebot.LongPoller{Timeout: 10 * time.Second}}
 	b, err := telebot.NewBot(pref)
 	if err != nil {
 		return nil, err
 	}
 	botInstance := &Bot{
-		bot:          b,
-		service:      service,
-		userRepo:     userRepo,
-		suggester:    suggester,
-		userStates:   make(map[int64]*userState),
-		viewRegistry: make(map[uint]map[string]telebot.Editable),
+		bot:            b,
+		service:        service,
+		userRepo:       userRepo,
+		suggester:      suggester,
+		userStates:     make(map[int64]*userState),
+		viewRegistry:   make(map[uint]map[string]telebot.Editable),
+		alertChannelID: alertChannelID,
 	}
 	b.Use(botInstance.authMiddleware())
 	return botInstance, nil
@@ -83,22 +85,44 @@ func (b *Bot) startNotifier(notifChan <-chan *models.Incident) {
 	log.Println("Notification listener started.")
 	for incident := range notifChan {
 		log.Printf("Received notification for new incident: %s", incident.Summary)
-		users, err := b.userRepo.ListAll(context.Background())
-		if err != nil {
-			log.Printf("Error getting users for notification: %v", err)
+
+		if b.alertChannelID == 0 {
+			log.Println("Alert channel ID is not configured, skipping notification.")
 			continue
 		}
-		message := fmt.Sprintf("🚨 *Новый инцидент: %s*\n\n*Описание:* %s", escapeMarkdown(incident.Summary), escapeMarkdown(incident.Description))
-		keyboard := &telebot.ReplyMarkup{
-			InlineKeyboard: [][]telebot.InlineButton{
-				{{Text: "Посмотреть действия", Data: showActionsPrefix + strconv.FormatUint(uint64(incident.ID), 10)}},
-			},
+
+		// Create a new topic for the incident
+		chat := &telebot.Chat{ID: b.alertChannelID}
+		topic, err := b.bot.CreateTopic(chat, &telebot.Topic{Name: incident.Summary})
+		if err != nil {
+			log.Printf("Failed to create topic for incident %d: %v", incident.ID, err)
+			continue
 		}
-		for _, user := range users {
-			_, err := b.bot.Send(&telebot.User{ID: user.TelegramID}, message, keyboard, telebot.ModeMarkdownV2)
-			if err != nil {
-				log.Printf("Failed to send notification to user %d: %v", user.TelegramID, err)
-			}
+
+		err = b.service.SetTelegramTopicID(context.Background(), incident.ID, int64(topic.ThreadID))
+		if err != nil {
+			log.Printf("Failed to set telegram topic ID for incident %d: %v", incident.ID, err)
+		}
+
+		// Send the main incident message to the topic
+		message := b.formatIncidentMessage(incident, false)
+		keyboard := b.buildIncidentViewKeyboard(incident, false)
+		msg, err := b.bot.Send(chat, message, &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2, &telebot.SendOptions{ThreadID: topic.ThreadID, DisableWebPagePreview: true})
+		if err != nil {
+			log.Printf("Failed to send notification to topic %d: %v", topic.ThreadID, err)
+			continue
+		}
+
+		err = b.service.SetTelegramMessageID(context.Background(), incident.ID, msg.Chat.ID, int64(msg.ID))
+		if err != nil {
+			log.Printf("Failed to set telegram message ID for incident %d: %v", incident.ID, err)
+		}
+
+		// Send a summary message to the main channel
+		summaryMessage := fmt.Sprintf("🔥 *New Incident:* [%s](https://t.me/c/%s/%d)", escapeMarkdown(incident.Summary), strings.TrimPrefix(strconv.FormatInt(b.alertChannelID, 10), "-100"), topic.ThreadID)
+		_, err = b.bot.Send(chat, summaryMessage, telebot.ModeMarkdownV2)
+		if err != nil {
+			log.Printf("Failed to send summary notification to channel %d: %v", b.alertChannelID, err)
 		}
 	}
 }
@@ -107,28 +131,33 @@ func (b *Bot) startUpdateListener(updateChan <-chan *models.Incident) {
 	log.Println("Update listener started.")
 	for incident := range updateChan {
 		log.Printf("Received update for incident ID %d", incident.ID)
-		b.registryMu.RLock()
-		views, ok := b.viewRegistry[incident.ID]
-		if ok {
-			// Create a copy of the map to avoid holding the lock while sending messages
-			viewsCopy := make(map[string]telebot.Editable)
-			for k, v := range views {
-				viewsCopy[k] = v
-			}
-			b.registryMu.RUnlock()
 
-			log.Printf("Found %d views to update for incident %d", len(viewsCopy), incident.ID)
-			for _, view := range viewsCopy {
-				// It's better to fetch the latest incident state before rendering
-				freshIncident, err := b.service.GetIncidentByID(context.Background(), incident.ID)
+		if !incident.TelegramChatID.Valid || !incident.TelegramMessageID.Valid {
+			log.Printf("Incident %d does not have a Telegram message ID, skipping update.", incident.ID)
+			continue
+		}
+
+		// It's better to fetch the latest incident state before rendering
+		freshIncident, err := b.service.GetIncidentByID(context.Background(), incident.ID)
+		if err != nil {
+			log.Printf("Error fetching incident %d for update: %v", incident.ID, err)
+			continue
+		}
+
+		editable := &telebot.StoredMessage{
+			ChatID:    freshIncident.TelegramChatID.Int64,
+			MessageID: strconv.FormatInt(freshIncident.TelegramMessageID.Int64, 10),
+		}
+
+		b.updateIncidentView(editable, freshIncident)
+
+		if freshIncident.Status == models.StatusResolved || freshIncident.Status == models.StatusRejected {
+			if freshIncident.TelegramTopicID.Valid {
+				err := b.bot.CloseTopic(&telebot.Chat{ID: freshIncident.TelegramChatID.Int64}, &telebot.Topic{ThreadID: int(freshIncident.TelegramTopicID.Int64)})
 				if err != nil {
-					log.Printf("Error fetching incident %d for update: %v", incident.ID, err)
-					continue
+					log.Printf("Failed to close topic %d for incident %d: %v", freshIncident.TelegramTopicID.Int64, freshIncident.ID, err)
 				}
-				b.updateIncidentView(view, freshIncident)
 			}
-		} else {
-			b.registryMu.RUnlock()
 		}
 	}
 }

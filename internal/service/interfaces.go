@@ -14,6 +14,8 @@ type IncidentRepository interface {
 	Update(ctx context.Context, incident *models.Incident) error
 	ListActive(ctx context.Context) ([]*models.Incident, error)
 	ListClosed(ctx context.Context, limit int, offset int) ([]*models.Incident, error)
+	SetTelegramMessageID(ctx context.Context, incidentID uint, chatID, messageID int64) error
+	SetTelegramTopicID(ctx context.Context, incidentID uint, topicID int64) error
 }
 
 // UserRepository определяет интерфейс для работы с пользователями.

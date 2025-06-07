@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 
 	"chatops-bot/internal/bot"
@@ -93,10 +94,16 @@ func main() {
 	if token == "" {
 		log.Println("TELEGRAM_BOT_TOKEN is not set. Bot will not start.")
 	} else {
+		alertChannelIDStr := getEnv("TELEGRAM_ALERT_CHANNEL_ID", "0")
+		alertChannelID, err := strconv.ParseInt(alertChannelIDStr, 10, 64)
+		if err != nil {
+			log.Fatalf("Invalid TELEGRAM_ALERT_CHANNEL_ID: %v", err)
+		}
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			telegramBot, err := bot.NewBot(token, incidentService, userRepo, actionSuggester)
+			telegramBot, err := bot.NewBot(token, incidentService, userRepo, actionSuggester, alertChannelID)
 			if err != nil {
 				log.Fatalf("Failed to create bot: %v", err)
 			}

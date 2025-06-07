@@ -58,3 +58,14 @@ func (r *GormIncidentRepository) ListClosed(ctx context.Context, limit int, offs
 		Find(&incidents).Error
 	return incidents, err
 }
+
+func (r *GormIncidentRepository) SetTelegramMessageID(ctx context.Context, incidentID uint, chatID, messageID int64) error {
+	return r.db.WithContext(ctx).Model(&models.Incident{}).Where("id = ?", incidentID).Updates(map[string]interface{}{
+		"telegram_chat_id":    chatID,
+		"telegram_message_id": messageID,
+	}).Error
+}
+
+func (r *GormIncidentRepository) SetTelegramTopicID(ctx context.Context, incidentID uint, topicID int64) error {
+	return r.db.WithContext(ctx).Model(&models.Incident{}).Where("id = ?", incidentID).Update("telegram_topic_id", topicID).Error
+}

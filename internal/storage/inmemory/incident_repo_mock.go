@@ -97,6 +97,38 @@ func (m *MockIncidentRepository) ListClosed(ctx context.Context, limit int, offs
 	return closedIncidents, nil
 }
 
+func (m *MockIncidentRepository) SetTelegramMessageID(ctx context.Context, incidentID uint, chatID, messageID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	incident, exists := m.incidents[incidentID]
+	if !exists {
+		return fmt.Errorf("incident with ID %d not found", incidentID)
+	}
+
+	incident.TelegramChatID.Int64 = chatID
+	incident.TelegramChatID.Valid = true
+	incident.TelegramMessageID.Int64 = messageID
+	incident.TelegramMessageID.Valid = true
+
+	return nil
+}
+
+func (m *MockIncidentRepository) SetTelegramTopicID(ctx context.Context, incidentID uint, topicID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	incident, exists := m.incidents[incidentID]
+	if !exists {
+		return fmt.Errorf("incident with ID %d not found", incidentID)
+	}
+
+	incident.TelegramTopicID.Int64 = topicID
+	incident.TelegramTopicID.Valid = true
+
+	return nil
+}
+
 // seed заполняет репозиторий тестовыми данными.
 func (m *MockIncidentRepository) seed() {
 	incident1 := &models.Incident{
