@@ -40,24 +40,40 @@ cd chatops-bot
 go mod tidy
 ```
 
-### 3. Настройка переменных окружения
+### 3. Настройка конфигурации
 
-Создайте файл `.env` в корне проекта или экспортируйте переменные напрямую.
+1.  **Настройка переменных окружения**:
+    Создайте файл `.env` в корне проекта, скопировав `.env.example`:
 
-```bash
-# Обязательно
-export TELEGRAM_BOT_TOKEN="ВАШ_ТОКЕН_ОТ_BOTFATHER"
+    ```bash
+    cp .env.example .env
+    ```
 
-# Опционально
-export APP_PORT="8080" # Порт для основного API (для Mini App)
-export ALERT_PORT="8081" # Порт для вебхуков от Alertmanager
-export WEBHOOK_TOKEN="ВАШ_СЕКРЕТНЫЙ_ТОКЕН" # Токен для аутентификации Alertmanager
-```
+    Откройте файл `.env` и укажите ваш токен для Telegram-бота:
+
+    ```
+    TELEGRAM_BOT_TOKEN="your-telegram-bot-token"
+    ```
+
+2.  **Настройка основного конфигурационного файла**:
+    Все остальные настройки приложения хранятся в файле `config.json`.
+
+    - **Создайте файл конфигурации**:
+      Скопируйте `config.example.json` в `config.json`.
+
+      ```bash
+      cp config.example.json config.json
+      ```
+
+    - **Отредактируйте `config.json`**:
+      Откройте файл `config.json` и укажите необходимые параметры:
+      - `telegram.alert_channel_id`: ID вашего Telegram-канала для оповещений.
+      - `server.webhook_token`: Секретный токен для аутентификации Alertmanager.
 
 ### 4. Запуск приложения
 
 ```bash
-go run cmd/chatops-bot/main.go
+go run cmd/chatops-bot/main.go --config=config.json
 ```
 
 При первом запуске будут автоматически применены миграции и создан файл `chatops.db`. Сервер API запустится на порту `APP_PORT`, а сервер для вебхуков — на `ALERT_PORT`.

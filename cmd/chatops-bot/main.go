@@ -4,13 +4,13 @@ import (
 	"context"
 	"flag"
 	"log"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 
 	"chatops-bot/internal/bot"
+	"chatops-bot/internal/config"
 	"chatops-bot/internal/executor/http"
+	"chatops-bot/internal/executor/mock"
 	"chatops-bot/internal/models"
 	"chatops-bot/internal/server"
 	"chatops-bot/internal/service"
@@ -25,14 +25,16 @@ import (
 )
 
 func main() {
-	// --- Определение флагов командной строки ---
-	useMockExecutor := flag.Bool("use-mock-executor", true, "Use the mock executor client instead of the real HTTP client")
-	executorBaseURL := flag.String("executor-url", "http://localhost:8082", "Base URL for the executor service")
+	configPath := flag.String("config", "config.json", "Path to the configuration file")
 	flag.Parse()
 
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
 	// --- Инициализация и миграция БД ---
-	// Добавляем параметр `_time_format=sqlite` для корректной обработки временных меток драйвером.
-	db, err := gorm.Open(sqlite.Open("chatops.db?_time_format=sqlite"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(cfg.DB.DSN), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -72,7 +74,12 @@ func main() {
 		log.Fatalf("Failed to create incident repository: %v", err)
 	}
 
-	executorClient := http.NewExecutorClient(*useMockExecutor, *executorBaseURL)
+	var executorClient service.ExecutorClient
+	if cfg.Executor.UseMock {
+		executorClient = mock.NewExecutorClientMock()
+	} else {
+		executorClient = http.NewExecutorClient(cfg.Executor.BaseURL)
+	}
 	actionSuggester := service.NewActionSuggester()
 
 	// Канал для уведомлений о новых инцидентах
@@ -88,42 +95,30 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// Для тестирования установим короткий интервал и время хранения
-		ticker := time.NewTicker(1 * time.Minute)
+		ticker := time.NewTicker(time.Duration(cfg.IncidentService.TopicDeletionInterval) * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				log.Println("Running job to delete old incident topics...")
-				incidentService.DeleteOldIncidentTopics(context.Background(), 1*time.Minute)
-			case <-context.Background().Done(): // Предполагается, что контекст будет отменен при завершении работы
+				incidentService.DeleteOldIncidentTopics(context.Background(), time.Duration(cfg.IncidentService.TopicMaxAge)*time.Second)
+			case <-context.Background().Done():
 				return
 			}
 		}
 	}()
 
 	// --- Запуск серверов и бота ---
-	appPort := getEnv("APP_PORT", "8080")
-	alertPort := getEnv("ALERT_PORT", "8081")
-	webhookToken := getEnv("WEBHOOK_TOKEN", "") // Рекомендуется установить в production
-
-	server.Start(context.Background(), incidentService, userRepo, appPort, alertPort, webhookToken)
+	server.Start(context.Background(), incidentService, userRepo, cfg.Server.AppPort, cfg.Server.AlertPort, cfg.Server.WebhookToken)
 
 	// --- Запуск Telegram-бота ---
-	token := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if token == "" {
-		log.Println("TELEGRAM_BOT_TOKEN is not set. Bot will not start.")
+	if cfg.Telegram.BotToken == "" {
+		log.Println("Telegram bot token is not set. Bot will not start.")
 	} else {
-		alertChannelIDStr := getEnv("TELEGRAM_ALERT_CHANNEL_ID", "0")
-		alertChannelID, err := strconv.ParseInt(alertChannelIDStr, 10, 64)
-		if err != nil {
-			log.Fatalf("Invalid TELEGRAM_ALERT_CHANNEL_ID: %v", err)
-		}
-
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			telegramBot, err := bot.NewBot(token, incidentService, userRepo, actionSuggester, alertChannelID)
+			telegramBot, err := bot.NewBot(cfg.Telegram.BotToken, incidentService, userRepo, actionSuggester, cfg.Telegram.AlertChannelID)
 			if err != nil {
 				log.Fatalf("Failed to create bot: %v", err)
 			}
@@ -133,12 +128,4 @@ func main() {
 
 	log.Println("Application started. Press Ctrl+C to exit.")
 	wg.Wait()
-}
-
-// getEnv получает значение переменной окружения или возвращает значение по умолчанию.
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
 }
