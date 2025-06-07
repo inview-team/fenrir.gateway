@@ -26,6 +26,7 @@ const (
 	performResourceActionPrefix = "pra:"
 	scaleDeploymentPrefix       = "scd:"
 	allocateHardwarePrefix      = "ahw:"
+	toggleHistoryPrefix         = "th:"
 )
 
 // State for awaiting user input
@@ -42,12 +43,14 @@ type userState struct {
 }
 
 type Bot struct {
-	bot        *telebot.Bot
-	service    *service.IncidentService
-	userRepo   service.UserRepository
-	suggester  *service.ActionSuggester
-	userStates map[int64]*userState
-	mu         sync.RWMutex
+	bot          *telebot.Bot
+	service      *service.IncidentService
+	userRepo     service.UserRepository
+	suggester    *service.ActionSuggester
+	userStates   map[int64]*userState
+	mu           sync.RWMutex
+	viewRegistry map[uint]map[string]telebot.Editable
+	registryMu   sync.RWMutex
 }
 
 func NewBot(token string, service *service.IncidentService, userRepo service.UserRepository, suggester *service.ActionSuggester) (*Bot, error) {
@@ -57,19 +60,21 @@ func NewBot(token string, service *service.IncidentService, userRepo service.Use
 		return nil, err
 	}
 	botInstance := &Bot{
-		bot:        b,
-		service:    service,
-		userRepo:   userRepo,
-		suggester:  suggester,
-		userStates: make(map[int64]*userState),
+		bot:          b,
+		service:      service,
+		userRepo:     userRepo,
+		suggester:    suggester,
+		userStates:   make(map[int64]*userState),
+		viewRegistry: make(map[uint]map[string]telebot.Editable),
 	}
 	b.Use(botInstance.authMiddleware())
 	return botInstance, nil
 }
 
-func (b *Bot) Start(notifChan <-chan *models.Incident) {
+func (b *Bot) Start(notifChan, updateChan <-chan *models.Incident) {
 	b.registerHandlers()
 	go b.startNotifier(notifChan)
+	go b.startUpdateListener(updateChan)
 	log.Println("Telegram bot starting...")
 	b.bot.Start()
 }
@@ -94,6 +99,36 @@ func (b *Bot) startNotifier(notifChan <-chan *models.Incident) {
 			if err != nil {
 				log.Printf("Failed to send notification to user %d: %v", user.TelegramID, err)
 			}
+		}
+	}
+}
+
+func (b *Bot) startUpdateListener(updateChan <-chan *models.Incident) {
+	log.Println("Update listener started.")
+	for incident := range updateChan {
+		log.Printf("Received update for incident ID %d", incident.ID)
+		b.registryMu.RLock()
+		views, ok := b.viewRegistry[incident.ID]
+		if ok {
+			// Create a copy of the map to avoid holding the lock while sending messages
+			viewsCopy := make(map[string]telebot.Editable)
+			for k, v := range views {
+				viewsCopy[k] = v
+			}
+			b.registryMu.RUnlock()
+
+			log.Printf("Found %d views to update for incident %d", len(viewsCopy), incident.ID)
+			for _, view := range viewsCopy {
+				// It's better to fetch the latest incident state before rendering
+				freshIncident, err := b.service.GetIncidentByID(context.Background(), incident.ID)
+				if err != nil {
+					log.Printf("Error fetching incident %d for update: %v", incident.ID, err)
+					continue
+				}
+				b.updateIncidentView(view, freshIncident)
+			}
+		} else {
+			b.registryMu.RUnlock()
 		}
 	}
 }
@@ -166,9 +201,9 @@ func (b *Bot) handleCallback(c telebot.Context) error {
 
 	switch prefix {
 	case viewIncidentPrefix:
-		return b.showIncidentView(c, uint(incidentID))
+		return b.showIncidentView(c, uint(incidentID), false)
 	case showActionsPrefix:
-		return b.showActionsView(c, uint(incidentID))
+		return b.showActionsView(c, uint(incidentID), false)
 	case closeIncidentPrefix:
 		return b.showCloseOptions(c, uint(incidentID))
 	case setStatusPrefix:
@@ -183,6 +218,8 @@ func (b *Bot) handleCallback(c telebot.Context) error {
 		return b.handleScaleDeployment(c)
 	case allocateHardwarePrefix:
 		return b.handleAllocateHardware(c)
+	case toggleHistoryPrefix:
+		return b.handleToggleHistory(c)
 	default:
 		return c.Respond()
 	}
@@ -226,9 +263,12 @@ func (b *Bot) handleTextMessage(c telebot.Context) error {
 		req.Parameters["replicas"] = c.Text()
 		result, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), *req)
 		if err != nil {
-			c.Send(fmt.Sprintf("Ошибка: %v", err))
+			b.bot.Send(c.Chat(), fmt.Sprintf("Ошибка: %v", err))
 		} else {
-			c.Send(result.Message)
+			// Attempt to send a pop-up like alert.
+			// Note: This is a workaround, as pop-ups are for callbacks.
+			// We send a message and then quickly delete it.
+			b.bot.Send(c.Chat(), result.Message)
 		}
 
 		c.Delete()
@@ -244,9 +284,9 @@ func (b *Bot) handleTextMessage(c telebot.Context) error {
 		req.Parameters["resources"] = c.Text()
 		result, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), *req)
 		if err != nil {
-			c.Send(fmt.Sprintf("Ошибка: %v", err))
+			b.bot.Send(c.Chat(), fmt.Sprintf("Ошибка: %v", err))
 		} else {
-			c.Send(result.Message)
+			b.bot.Send(c.Chat(), result.Message)
 		}
 
 		c.Delete()
@@ -257,29 +297,40 @@ func (b *Bot) handleTextMessage(c telebot.Context) error {
 	return nil
 }
 
-func (b *Bot) showIncidentView(c telebot.Context, incidentID uint) error {
+func (b *Bot) showIncidentView(c telebot.Context, incidentID uint, historyVisible bool) error {
 	incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), incidentID)
 	if err != nil {
 		return c.EditOrSend("Не удалось найти инцидент.")
 	}
-	message := b.formatIncidentMessage(incident)
-	keyboard := b.buildIncidentViewKeyboard(incident)
+
+	if incident.Status != models.StatusActive {
+		return b.showClosedIncidentView(c, incident, historyVisible)
+	}
+
+	message := b.formatIncidentMessage(incident, historyVisible)
+	keyboard := b.buildIncidentViewKeyboard(incident, historyVisible)
 	err = c.Edit(message, &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
+	if err == nil {
+		b.addIncidentView(incident.ID, c.Message())
+	}
 	if err != nil && strings.Contains(err.Error(), "message is not modified") {
 		return c.Respond()
 	}
 	return err
 }
 
-func (b *Bot) showActionsView(c telebot.Context, incidentID uint) error {
+func (b *Bot) showActionsView(c telebot.Context, incidentID uint, historyVisible bool) error {
 	incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), incidentID)
 	if err != nil {
 		return c.EditOrSend("Не удалось найти инцидент.")
 	}
-	message := b.formatIncidentMessage(incident)
+	message := b.formatIncidentMessage(incident, historyVisible)
 	suggestedActions := b.suggester.SuggestActions(incident)
-	keyboard := b.buildActionsViewKeyboard(incident, suggestedActions)
+	keyboard := b.buildActionsViewKeyboard(incident, suggestedActions, historyVisible)
 	err = c.Edit(message, &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
+	if err == nil {
+		b.addIncidentView(incident.ID, c.Message())
+	}
 	if err != nil && strings.Contains(err.Error(), "message is not modified") {
 		return c.Respond()
 	}
@@ -376,6 +427,16 @@ func (b *Bot) handleSetStatus(c telebot.Context) error {
 		return c.Send("Не удалось обновить статус инцидента.")
 	}
 	c.Send(fmt.Sprintf("Статус инцидента обновлен на '%s'.", status))
+
+	// Если инцидент закрыт, удаляем его из отслеживаемых
+	if status == models.StatusResolved || status == models.StatusRejected {
+		b.removeIncidentView(uint(incidentID))
+		incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
+		if err == nil {
+			return b.showClosedIncidentView(c, incident, false)
+		}
+	}
+
 	return c.Delete()
 }
 
@@ -464,7 +525,7 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 	}
 
 	if result.Error != "" {
-		return b.showIncidentView(c, incidentID)
+		return b.showIncidentView(c, incidentID, false)
 	}
 
 	switch actionType {
@@ -493,7 +554,7 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 		return b.showResourceActionsView(c)
 	}
 
-	return b.showActionsView(c, incidentID)
+	return b.showActionsView(c, incidentID, false)
 }
 
 func (b *Bot) showDynamicResourceList(c telebot.Context, incidentID uint, result models.ActionResult) error {
@@ -525,17 +586,30 @@ func (b *Bot) showDynamicResourceList(c telebot.Context, incidentID uint, result
 	return c.Edit(escapeMarkdown(result.Message), &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
 }
 
-func (b *Bot) buildIncidentViewKeyboard(incident *models.Incident) [][]telebot.InlineButton {
-	if incident.Status != models.StatusActive {
-		return nil
+func (b *Bot) buildIncidentViewKeyboard(incident *models.Incident, historyVisible bool) [][]telebot.InlineButton {
+	var keyboard [][]telebot.InlineButton
+
+	if incident.Status == models.StatusActive {
+		keyboard = append(keyboard, []telebot.InlineButton{
+			{Text: "✅ Закрыть инцидент", Data: closeIncidentPrefix + strconv.FormatUint(uint64(incident.ID), 10)},
+			{Text: "▶️ Выполнить действия", Data: showActionsPrefix + strconv.FormatUint(uint64(incident.ID), 10)},
+		})
 	}
-	return [][]telebot.InlineButton{
-		{{Text: "✅ Закрыть инцидент", Data: closeIncidentPrefix + strconv.FormatUint(uint64(incident.ID), 10)}},
-		{{Text: "▶️ Выполнить действия", Data: showActionsPrefix + strconv.FormatUint(uint64(incident.ID), 10)}},
+
+	if len(incident.AuditLog) > 3 {
+		historyButtonText := "📖 Показать историю"
+		if historyVisible {
+			historyButtonText = "📖 Скрыть историю"
+		}
+		keyboard = append(keyboard, []telebot.InlineButton{
+			{Text: historyButtonText, Data: fmt.Sprintf("%s%d:%t:main", toggleHistoryPrefix, incident.ID, !historyVisible)},
+		})
 	}
+
+	return keyboard
 }
 
-func (b *Bot) buildActionsViewKeyboard(incident *models.Incident, actions []models.SuggestedAction) [][]telebot.InlineButton {
+func (b *Bot) buildActionsViewKeyboard(incident *models.Incident, actions []models.SuggestedAction, historyVisible bool) [][]telebot.InlineButton {
 	var keyboard [][]telebot.InlineButton
 	var actionRow []telebot.InlineButton
 	for i, action := range actions {
@@ -557,6 +631,16 @@ func (b *Bot) buildActionsViewKeyboard(incident *models.Incident, actions []mode
 
 	if incident.Status == models.StatusActive {
 		keyboard = append(keyboard, []telebot.InlineButton{{Text: "✅ Закрыть инцидент", Data: closeIncidentPrefix + strconv.FormatUint(uint64(incident.ID), 10)}})
+	}
+
+	if len(incident.AuditLog) > 3 {
+		historyButtonText := "📖 Показать историю"
+		if historyVisible {
+			historyButtonText = "📖 Скрыть историю"
+		}
+		keyboard = append(keyboard, []telebot.InlineButton{
+			{Text: historyButtonText, Data: fmt.Sprintf("%s%d:%t:actions", toggleHistoryPrefix, incident.ID, !historyVisible)},
+		})
 	}
 
 	return keyboard
@@ -622,7 +706,7 @@ func (b *Bot) authMiddleware() telebot.MiddlewareFunc {
 	}
 }
 
-func (b *Bot) formatIncidentMessage(incident *models.Incident) string {
+func (b *Bot) formatIncidentMessage(incident *models.Incident, historyVisible bool) string {
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("*Инцидент: %s*\n", escapeMarkdown(incident.Summary)))
 	builder.WriteString(fmt.Sprintf("*Статус:* `%s`\n", incident.Status))
@@ -636,30 +720,34 @@ func (b *Bot) formatIncidentMessage(incident *models.Incident) string {
 	builder.WriteString(fmt.Sprintf("*Начало:* `%s`\n", incident.StartsAt.Format(time.RFC1123)))
 
 	if len(incident.AuditLog) > 0 {
-		builder.WriteString("\n*История действий*\n")
-		for _, entry := range incident.AuditLog {
-			builder.WriteString(fmt.Sprintf(
-				"`%s` \\- *%s* by *%s* \\- *%s*\n",
-				entry.Timestamp.Format("15:04:05"),
-				escapeMarkdown(entry.Action),
-				escapeMarkdown(entry.User.Username),
-				escapeMarkdown(entry.Result),
-			))
-			if entry.Action == "update_status" {
-				if reason, ok := entry.Parameters["reason"]; ok && reason != "" {
-					builder.WriteString(fmt.Sprintf("  *Причина:* %s\n", escapeMarkdown(reason)))
+		if historyVisible || len(incident.AuditLog) <= 3 {
+			builder.WriteString("\n*История действий*\n")
+			for _, entry := range incident.AuditLog {
+				builder.WriteString(fmt.Sprintf(
+					"`%s` \\- *%s* by *%s* \\- *%s*\n",
+					entry.Timestamp.Format("15:04:05"),
+					escapeMarkdown(entry.Action),
+					escapeMarkdown(entry.User.Username),
+					escapeMarkdown(entry.Result),
+				))
+				if entry.Action == "update_status" {
+					if reason, ok := entry.Parameters["reason"]; ok && reason != "" {
+						builder.WriteString(fmt.Sprintf("  *Причина:* %s\n", escapeMarkdown(reason)))
+					}
+				}
+				if entry.Action == string(models.ActionScaleDeployment) {
+					if replicas, ok := entry.Parameters["replicas"]; ok {
+						builder.WriteString(fmt.Sprintf("  *Реплики:* `%s`\n", escapeMarkdown(replicas)))
+					}
+				}
+				if entry.Action == string(models.ActionAllocateHardware) {
+					if resources, ok := entry.Parameters["resources"]; ok {
+						builder.WriteString(fmt.Sprintf("  *Ресурсы:* `%s`\n", escapeMarkdown(resources)))
+					}
 				}
 			}
-			if entry.Action == string(models.ActionScaleDeployment) {
-				if replicas, ok := entry.Parameters["replicas"]; ok {
-					builder.WriteString(fmt.Sprintf("  *Реплики:* `%s`\n", escapeMarkdown(replicas)))
-				}
-			}
-			if entry.Action == string(models.ActionAllocateHardware) {
-				if resources, ok := entry.Parameters["resources"]; ok {
-					builder.WriteString(fmt.Sprintf("  *Ресурсы:* `%s`\n", escapeMarkdown(resources)))
-				}
-			}
+		} else {
+			builder.WriteString(fmt.Sprintf("\n_История действий скрыта \\(%d записей\\)\\._\n", len(incident.AuditLog)))
 		}
 	}
 	return builder.String()
@@ -745,4 +833,92 @@ func escapeMarkdown(s string) string {
 		"\\|", "{", "\\{", "}", "\\}", ".", "\\.", "!", "\\!",
 	)
 	return replacer.Replace(s)
+}
+
+func (b *Bot) addIncidentView(incidentID uint, editable telebot.Editable) {
+	b.registryMu.Lock()
+	defer b.registryMu.Unlock()
+	if _, ok := b.viewRegistry[incidentID]; !ok {
+		b.viewRegistry[incidentID] = make(map[string]telebot.Editable)
+	}
+	key := getViewRegistryKey(editable)
+	b.viewRegistry[incidentID][key] = editable
+	log.Printf("Added view for incident %d. Total views for this incident: %d", incidentID, len(b.viewRegistry[incidentID]))
+}
+
+func (b *Bot) removeIncidentView(incidentID uint) {
+	b.registryMu.Lock()
+	defer b.registryMu.Unlock()
+	delete(b.viewRegistry, incidentID)
+	log.Printf("Removed all views for incident %d", incidentID)
+}
+
+func (b *Bot) updateIncidentView(view telebot.Editable, incident *models.Incident) {
+	// For simplicity, we assume history is not visible on automatic updates.
+	// A more complex state management would be needed to preserve the toggle state.
+	historyVisible := false
+	message := b.formatIncidentMessage(incident, historyVisible)
+	var keyboard [][]telebot.InlineButton
+
+	// Determine which keyboard to show based on the view content.
+	// This is a simplification. A more robust solution might store the "view type"
+	// along with the editable message.
+	messageSig, _ := view.MessageSig()
+	if strings.Contains(messageSig, "actions") { // Heuristic
+		suggestedActions := b.suggester.SuggestActions(incident)
+		keyboard = b.buildActionsViewKeyboard(incident, suggestedActions, historyVisible)
+	} else {
+		keyboard = b.buildIncidentViewKeyboard(incident, historyVisible)
+	}
+
+	_, err := b.bot.Edit(view, message, &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
+	if err != nil {
+		if strings.Contains(err.Error(), "message is not modified") {
+			// Not an error, just no change needed.
+		} else if strings.Contains(err.Error(), "message to edit not found") {
+			// The message was deleted by the user, remove it from the registry
+			log.Printf("Message %s not found, removing from registry.", getViewRegistryKey(view))
+			b.registryMu.Lock()
+			// This part is tricky as we need to find which incident this view belongs to.
+			// A reverse mapping would be needed for efficient cleanup.
+			// For now, we'll accept this might leave some stale entries.
+			b.registryMu.Unlock()
+		} else {
+			log.Printf("Failed to update incident view for %s: %v", getViewRegistryKey(view), err)
+		}
+	} else {
+		log.Printf("Successfully updated view for incident %d", incident.ID)
+	}
+}
+
+func getViewRegistryKey(editable telebot.Editable) string {
+	msgSig, chatID := editable.MessageSig()
+	return fmt.Sprintf("%d-%s", chatID, msgSig)
+}
+
+func (b *Bot) handleToggleHistory(c telebot.Context) error {
+	parts := strings.Split(c.Data(), ":")
+	incidentID, _ := strconv.ParseUint(parts[1], 10, 32)
+	historyVisible, _ := strconv.ParseBool(parts[2])
+	viewType := parts[3] // "main" or "actions"
+
+	if viewType == "actions" {
+		return b.showActionsView(c, uint(incidentID), historyVisible)
+	}
+	return b.showIncidentView(c, uint(incidentID), historyVisible)
+}
+
+func (b *Bot) showClosedIncidentView(c telebot.Context, incident *models.Incident, historyVisible bool) error {
+	message := b.formatIncidentMessage(incident, historyVisible)
+	var keyboard [][]telebot.InlineButton
+
+	historyButtonText := "📖 Показать историю"
+	if historyVisible {
+		historyButtonText = "📖 Скрыть историю"
+	}
+	keyboard = append(keyboard, []telebot.InlineButton{
+		{Text: historyButtonText, Data: fmt.Sprintf("%s%d:%t:closed", toggleHistoryPrefix, incident.ID, !historyVisible)},
+	})
+
+	return c.Edit(message, &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
 }

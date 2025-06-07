@@ -21,6 +21,7 @@ type testKit struct {
 	suggester      *service.ActionSuggester
 	service        *service.IncidentService
 	notifChan      chan *models.Incident
+	updateChan     chan *models.Incident
 }
 
 func setupService(t *testing.T) *testKit {
@@ -29,8 +30,9 @@ func setupService(t *testing.T) *testKit {
 	executorClient := mock.NewExecutorClientMock()
 	suggester := service.NewActionSuggester()
 	notifChan := make(chan *models.Incident, 1)
+	updateChan := make(chan *models.Incident, 1)
 
-	incidentService := service.NewIncidentService(incidentRepo, userRepo, executorClient, suggester, notifChan)
+	incidentService := service.NewIncidentService(incidentRepo, userRepo, executorClient, suggester, notifChan, updateChan)
 
 	return &testKit{
 		incidentRepo:   incidentRepo,
@@ -39,6 +41,7 @@ func setupService(t *testing.T) *testKit {
 		suggester:      suggester,
 		service:        incidentService,
 		notifChan:      notifChan,
+		updateChan:     updateChan,
 	}
 }
 
@@ -91,6 +94,15 @@ func TestIncidentService_ExecuteAction_ClosingAction(t *testing.T) {
 	result, err := kit.service.ExecuteAction(ctx, req)
 	require.NoError(t, err)
 	assert.Empty(t, result.Error)
+
+	// Проверяем, что обновление было отправлено
+	select {
+	case updated := <-kit.updateChan:
+		assert.Equal(t, incident.ID, updated.ID)
+		assert.Equal(t, models.StatusResolved, updated.Status)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("did not receive update notification")
+	}
 
 	updatedIncident, _ := kit.incidentRepo.FindByID(ctx, incident.ID)
 	require.NotNil(t, updatedIncident)

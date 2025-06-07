@@ -75,8 +75,9 @@ func main() {
 
 	// Канал для уведомлений о новых инцидентах
 	notificationChan := make(chan *models.Incident, 10)
+	updateChan := make(chan *models.Incident, 10)
 
-	incidentService := service.NewIncidentService(incidentRepo, userRepo, executorClient, actionSuggester, notificationChan)
+	incidentService := service.NewIncidentService(incidentRepo, userRepo, executorClient, actionSuggester, notificationChan, updateChan)
 
 	var wg sync.WaitGroup
 
@@ -99,7 +100,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("Failed to create bot: %v", err)
 			}
-			telegramBot.Start(notificationChan)
+			telegramBot.Start(notificationChan, updateChan)
 		}()
 	}
 

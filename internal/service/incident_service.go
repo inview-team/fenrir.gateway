@@ -19,16 +19,18 @@ type IncidentService struct {
 	executor         ExecutorClient
 	suggester        *ActionSuggester
 	notificationChan chan<- *models.Incident // Канал для отправки уведомлений
+	updateChan       chan<- *models.Incident // Канал для отправки обновлений
 }
 
 // NewIncidentService создает новый экземпляр IncidentService.
-func NewIncidentService(repo IncidentRepository, userRepo UserRepository, executor ExecutorClient, suggester *ActionSuggester, notifChan chan<- *models.Incident) *IncidentService {
+func NewIncidentService(repo IncidentRepository, userRepo UserRepository, executor ExecutorClient, suggester *ActionSuggester, notifChan, updateChan chan<- *models.Incident) *IncidentService {
 	return &IncidentService{
 		repo:             repo,
 		userRepo:         userRepo,
 		executor:         executor,
 		suggester:        suggester,
 		notificationChan: notifChan,
+		updateChan:       updateChan,
 	}
 }
 
@@ -130,6 +132,9 @@ func (s *IncidentService) ExecuteAction(ctx context.Context, req models.ActionRe
 		return result, err // Возвращаем результат действия, но и ошибку сохранения
 	}
 
+	// Отправляем обновленный инцидент в канал
+	s.updateChan <- incident
+
 	return result, nil
 }
 
@@ -174,7 +179,12 @@ func (s *IncidentService) UpdateStatus(ctx context.Context, userID, incidentID u
 	}
 	incident.AuditLog = append(incident.AuditLog, entry)
 
-	return s.repo.Update(ctx, incident)
+	err = s.repo.Update(ctx, incident)
+	if err == nil {
+		// Отправляем обновленный инцидент в канал
+		s.updateChan <- incident
+	}
+	return err
 }
 
 func addAffectedResourceToAudit(entry *models.AuditRecord, req models.ActionRequest) {
