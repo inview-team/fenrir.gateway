@@ -121,6 +121,9 @@ func (s *IncidentService) ExecuteAction(ctx context.Context, req models.ActionRe
 		Result:     result.Message,
 	}
 
+	// Добавляем информацию о затронутом ресурсе, если она есть
+	addAffectedResourceToAudit(&entry, req)
+
 	incident.AuditLog = append(incident.AuditLog, entry)
 
 	if err := s.repo.Update(ctx, incident); err != nil {
@@ -172,4 +175,20 @@ func (s *IncidentService) UpdateStatus(ctx context.Context, userID, incidentID u
 	incident.AuditLog = append(incident.AuditLog, entry)
 
 	return s.repo.Update(ctx, incident)
+}
+
+func addAffectedResourceToAudit(entry *models.AuditRecord, req models.ActionRequest) {
+	resourceIdentifier := ""
+	if pod, ok := req.Parameters["pod"]; ok {
+		resourceIdentifier = fmt.Sprintf("pod: %s", pod)
+	} else if deployment, ok := req.Parameters["deployment"]; ok {
+		resourceIdentifier = fmt.Sprintf("deployment: %s", deployment)
+	}
+
+	if resourceIdentifier != "" {
+		if entry.Parameters == nil {
+			entry.Parameters = make(models.JSONBMap)
+		}
+		entry.Parameters["affected_resource"] = resourceIdentifier
+	}
 }

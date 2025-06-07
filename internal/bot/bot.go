@@ -226,9 +226,9 @@ func (b *Bot) handleTextMessage(c telebot.Context) error {
 		req.Parameters["replicas"] = c.Text()
 		result, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), *req)
 		if err != nil {
-			c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
+			c.Send(fmt.Sprintf("Ошибка: %v", err))
 		} else {
-			c.Respond(&telebot.CallbackResponse{Text: result.Message, ShowAlert: true})
+			c.Send(result.Message)
 		}
 
 		c.Delete()
@@ -244,9 +244,9 @@ func (b *Bot) handleTextMessage(c telebot.Context) error {
 		req.Parameters["resources"] = c.Text()
 		result, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), *req)
 		if err != nil {
-			c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
+			c.Send(fmt.Sprintf("Ошибка: %v", err))
 		} else {
-			c.Respond(&telebot.CallbackResponse{Text: result.Message, ShowAlert: true})
+			c.Send(result.Message)
 		}
 
 		c.Delete()
@@ -648,6 +648,16 @@ func (b *Bot) formatIncidentMessage(incident *models.Incident) string {
 			if entry.Action == "update_status" {
 				if reason, ok := entry.Parameters["reason"]; ok && reason != "" {
 					builder.WriteString(fmt.Sprintf("  *Причина:* %s\n", escapeMarkdown(reason)))
+				}
+			}
+			if entry.Action == string(models.ActionScaleDeployment) {
+				if replicas, ok := entry.Parameters["replicas"]; ok {
+					builder.WriteString(fmt.Sprintf("  *Реплики:* `%s`\n", escapeMarkdown(replicas)))
+				}
+			}
+			if entry.Action == string(models.ActionAllocateHardware) {
+				if resources, ok := entry.Parameters["resources"]; ok {
+					builder.WriteString(fmt.Sprintf("  *Ресурсы:* `%s`\n", escapeMarkdown(resources)))
 				}
 			}
 		}

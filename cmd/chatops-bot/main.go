@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 	"sync"
 
 	"chatops-bot/internal/bot"
-	"chatops-bot/internal/executor/mock"
+	"chatops-bot/internal/executor/http"
 	"chatops-bot/internal/models"
 	"chatops-bot/internal/server"
 	"chatops-bot/internal/service"
@@ -22,6 +23,11 @@ import (
 )
 
 func main() {
+	// --- Определение флагов командной строки ---
+	useMockExecutor := flag.Bool("use-mock-executor", true, "Use the mock executor client instead of the real HTTP client")
+	executorBaseURL := flag.String("executor-url", "http://localhost:8082", "Base URL for the executor service")
+	flag.Parse()
+
 	// --- Инициализация и миграция БД ---
 	// Добавляем параметр `_time_format=sqlite` для корректной обработки временных меток драйвером.
 	db, err := gorm.Open(sqlite.Open("chatops.db?_time_format=sqlite"), &gorm.Config{})
@@ -64,7 +70,7 @@ func main() {
 		log.Fatalf("Failed to create incident repository: %v", err)
 	}
 
-	executorClient := mock.NewExecutorClientMock()
+	executorClient := http.NewExecutorClient(*useMockExecutor, *executorBaseURL)
 	actionSuggester := service.NewActionSuggester()
 
 	// Канал для уведомлений о новых инцидентах
