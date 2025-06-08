@@ -20,7 +20,6 @@ const (
 
 	// Действия по управлению ресурсами
 	ActionAllocateHardware  ActionType = "allocate_hardware"
-	ActionGetPodInfo        ActionType = "get_pod_info"
 	ActionGetDeploymentInfo ActionType = "get_deployment_info"
 )
 

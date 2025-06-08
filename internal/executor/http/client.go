@@ -36,9 +36,6 @@ func (c *ExecutorClient) ExecuteAction(req models.ActionRequest) models.ActionRe
 	case models.ActionScaleDeployment:
 		res, _ := c.scaleDeployment(context.Background(), req)
 		return res
-	case models.ActionGetPodInfo:
-		res, _ := c.getPodInfo(context.Background(), req)
-		return res
 	case models.ActionListPodsForDeployment:
 		res, _ := c.listPodsByDeployment(context.Background(), req)
 		return res

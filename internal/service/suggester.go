@@ -95,11 +95,6 @@ func (s *ActionSuggester) SuggestActionsForResource(incident *models.Incident, r
 				Action:        string(models.ActionDeletePod),
 				Parameters:    params,
 			},
-			models.SuggestedAction{
-				HumanReadable: "ℹ️ Получить информацию",
-				Action:        string(models.ActionGetPodInfo),
-				Parameters:    params,
-			},
 		)
 	}
 

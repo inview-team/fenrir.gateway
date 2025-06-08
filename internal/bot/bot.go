@@ -713,10 +713,6 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 		if result.ResultData != nil {
 			return b.showDynamicResourceList(c, incidentID, result)
 		}
-	case models.ActionGetPodInfo:
-		if result.ResultData != nil && len(result.ResultData.Items) > 0 {
-			return b.showPodInfo(c, incidentID, result)
-		}
 	}
 
 	if req.Action == string(models.ActionScaleDeployment) || req.Action == string(models.ActionAllocateHardware) {
