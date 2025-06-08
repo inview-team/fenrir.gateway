@@ -44,15 +44,17 @@ type userState struct {
 }
 
 type Bot struct {
-	bot            *telebot.Bot
-	service        *service.IncidentService
-	userRepo       service.UserRepository
-	suggester      *service.ActionSuggester
-	userStates     map[int64]*userState
-	mu             sync.RWMutex
-	viewRegistry   map[uint]map[string]telebot.Editable
-	registryMu     sync.RWMutex
-	alertChannelID int64
+	bot                 *telebot.Bot
+	service             *service.IncidentService
+	userRepo            service.UserRepository
+	suggester           *service.ActionSuggester
+	userStates          map[int64]*userState
+	mu                  sync.RWMutex
+	viewRegistry        map[uint]map[string]telebot.Editable
+	registryMu          sync.RWMutex
+	alertChannelID      int64
+	ignoreNextUpdateFor map[uint]bool
+	ignoreMu            sync.Mutex
 }
 
 // isHighSeverity checks if an incident has a severity label of "critical" or "high".
@@ -70,13 +72,14 @@ func NewBot(token string, service *service.IncidentService, userRepo service.Use
 		return nil, err
 	}
 	botInstance := &Bot{
-		bot:            b,
-		service:        service,
-		userRepo:       userRepo,
-		suggester:      suggester,
-		userStates:     make(map[int64]*userState),
-		viewRegistry:   make(map[uint]map[string]telebot.Editable),
-		alertChannelID: alertChannelID,
+		bot:                 b,
+		service:             service,
+		userRepo:            userRepo,
+		suggester:           suggester,
+		userStates:          make(map[int64]*userState),
+		viewRegistry:        make(map[uint]map[string]telebot.Editable),
+		alertChannelID:      alertChannelID,
+		ignoreNextUpdateFor: make(map[uint]bool),
 	}
 	b.Use(botInstance.authMiddleware())
 	return botInstance, nil
@@ -211,6 +214,15 @@ func (b *Bot) startUpdateListener(updateChan <-chan *models.Incident) {
 	for incident := range updateChan {
 		log.Printf("Received update for incident ID %d", incident.ID)
 
+		b.ignoreMu.Lock()
+		if b.ignoreNextUpdateFor[incident.ID] {
+			delete(b.ignoreNextUpdateFor, incident.ID)
+			b.ignoreMu.Unlock()
+			log.Printf("Ignoring update for incident %d because a dynamic view is being shown.", incident.ID)
+			continue
+		}
+		b.ignoreMu.Unlock()
+
 		if !incident.TelegramChatID.Valid || !incident.TelegramMessageID.Valid {
 			log.Printf("Incident %d does not have a Telegram message ID, skipping update.", incident.ID)
 			continue
@@ -239,6 +251,7 @@ func (b *Bot) startUpdateListener(updateChan <-chan *models.Incident) {
 
 func (b *Bot) registerHandlers() {
 	b.bot.Handle("/start", b.handleStart)
+	b.bot.Handle("/help", b.handleHelp)
 	b.bot.Handle("/incidents", b.handleListIncidents)
 	b.bot.Handle("/history", b.handleHistory)
 	b.bot.Handle("/delete_incident_topic", b.handleDeleteIncidentTopic)
@@ -247,10 +260,52 @@ func (b *Bot) registerHandlers() {
 }
 
 func (b *Bot) handleStart(c telebot.Context) error {
-	return c.Send("Добро пожаловать! Используйте /incidents для просмотра активных инцидентов и /history для просмотра закрытых.")
+	return c.Send("Добро пожаловать! Используйте /help для просмотра доступных команд.")
+}
+
+func (b *Bot) handleHelp(c telebot.Context) error {
+	helpText := `
+*Доступные команды:*
+
+*/incidents* - Показать список активных инцидентов.
+  • *Использование:* /incidents
+  • *Просмотр конкретного инцидента:* /incidents <ID>
+
+*/history* - Показать историю закрытых инцидентов.
+  • *Использование:* /history
+  • *Просмотр конкретного инцидента:* /history <ID>
+
+*/help* - Показать это сообщение.
+`
+	return c.Send(helpText, &telebot.SendOptions{ParseMode: telebot.ModeMarkdown})
 }
 
 func (b *Bot) handleListIncidents(c telebot.Context) error {
+	args := c.Args()
+	if len(args) == 1 {
+		incidentID, err := strconv.ParseUint(args[0], 10, 32)
+		if err == nil {
+			incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
+			if err != nil {
+				return c.Send("Не удалось найти инцидент.")
+			}
+
+			message := b.formatIncidentMessage(incident, false)
+			var keyboard [][]telebot.InlineButton
+			if incident.Status == models.StatusActive {
+				keyboard = b.buildIncidentViewKeyboard(incident, false)
+			} else {
+				keyboard = b.buildClosedIncidentViewKeyboard(incident, false)
+			}
+
+			msg, err := b.bot.Send(c.Chat(), message, &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
+			if err == nil {
+				b.addIncidentView(incident.ID, msg)
+			}
+			return err
+		}
+	}
+
 	incidents, err := b.service.ListActiveIncidents(c.Get("ctx").(context.Context))
 	if err != nil {
 		return c.Send("Не удалось получить список инцидентов.")
@@ -305,6 +360,31 @@ func (b *Bot) handleDeleteIncidentTopic(c telebot.Context) error {
 }
 
 func (b *Bot) handleHistory(c telebot.Context) error {
+	args := c.Args()
+	if len(args) == 1 {
+		incidentID, err := strconv.ParseUint(args[0], 10, 32)
+		if err == nil {
+			incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
+			if err != nil {
+				return c.Send("Не удалось найти инцидент.")
+			}
+
+			message := b.formatIncidentMessage(incident, false)
+			var keyboard [][]telebot.InlineButton
+			if incident.Status == models.StatusActive {
+				keyboard = b.buildIncidentViewKeyboard(incident, false)
+			} else {
+				keyboard = b.buildClosedIncidentViewKeyboard(incident, false)
+			}
+
+			msg, err := b.bot.Send(c.Chat(), message, &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
+			if err == nil {
+				b.addIncidentView(incident.ID, msg)
+			}
+			return err
+		}
+	}
+
 	incidents, err := b.service.ListClosed(c.Get("ctx").(context.Context), 10, 0)
 	if err != nil {
 		return c.Send("Не удалось получить историю инцидентов.")
@@ -692,6 +772,10 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 		b.bot.Send(c.Chat(), formattedMessage, sendOpts)
 
 	case models.ActionDeletePod:
+		b.ignoreMu.Lock()
+		b.ignoreNextUpdateFor[incidentID] = true
+		b.ignoreMu.Unlock()
+
 		incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), incidentID)
 		if err != nil {
 			return c.Respond(&telebot.CallbackResponse{Text: "Incident not found"})
@@ -707,13 +791,14 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 		}
 		listPodsResult, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), listPodsReq)
 		if err != nil {
+			b.ignoreMu.Lock()
+			delete(b.ignoreNextUpdateFor, incidentID)
+			b.ignoreMu.Unlock()
 			return c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
 		}
 		return b.showDynamicResourceList(c, incidentID, listPodsResult)
 	case models.ActionListPodsForDeployment:
-		if result.ResultData != nil {
-			return b.showDynamicResourceList(c, incidentID, result)
-		}
+		return b.showDynamicResourceList(c, incidentID, result)
 	}
 
 	if req.Action == string(models.ActionScaleDeployment) || req.Action == string(models.ActionAllocateHardware) {
@@ -1225,8 +1310,7 @@ func (b *Bot) handleToggleHistory(c telebot.Context) error {
 	return b.showIncidentView(c, uint(incidentID), historyVisible)
 }
 
-func (b *Bot) showClosedIncidentView(c telebot.Context, incident *models.Incident, historyVisible bool) error {
-	message := b.formatIncidentMessage(incident, historyVisible)
+func (b *Bot) buildClosedIncidentViewKeyboard(incident *models.Incident, historyVisible bool) [][]telebot.InlineButton {
 	var keyboard [][]telebot.InlineButton
 
 	historyButtonText := "📖 Показать историю"
@@ -1240,6 +1324,13 @@ func (b *Bot) showClosedIncidentView(c telebot.Context, incident *models.Inciden
 			{Text: historyButtonText, Data: fmt.Sprintf("%s%d:%t:closed", toggleHistoryPrefix, incident.ID, !historyVisible)},
 		})
 	}
+
+	return keyboard
+}
+
+func (b *Bot) showClosedIncidentView(c telebot.Context, incident *models.Incident, historyVisible bool) error {
+	message := b.formatIncidentMessage(incident, historyVisible)
+	keyboard := b.buildClosedIncidentViewKeyboard(incident, historyVisible)
 
 	return c.Edit(message, &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
 }
