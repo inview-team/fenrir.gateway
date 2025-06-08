@@ -56,34 +56,14 @@ func (s *ActionSuggester) SuggestActionsForResource(incident *models.Incident, r
 		params := map[string]string{"deployment": resourceName, "namespace": namespace}
 		suggestions = append(suggestions,
 			models.SuggestedAction{
-				HumanReadable: "⏪ Откатить",
-				Action:        string(models.ActionRollbackDeployment),
-				Parameters:    params,
-			},
-			models.SuggestedAction{
 				HumanReadable: "📦 Список подов",
 				Action:        string(models.ActionListPodsForDeployment),
-				Parameters:    params,
-			},
-			models.SuggestedAction{
-				HumanReadable: "ℹ️ Описать (Describe)",
-				Action:        string(models.ActionDescribeDeployment),
 				Parameters:    params,
 			},
 		)
 	case "pod":
 		params := map[string]string{"pod_name": resourceName, "namespace": namespace}
 		suggestions = append(suggestions,
-			models.SuggestedAction{
-				HumanReadable: "📄 Логи",
-				Action:        string(models.ActionGetPodLogs),
-				Parameters:    map[string]string{"pod": resourceName, "namespace": namespace},
-			},
-			models.SuggestedAction{
-				HumanReadable: "ℹ️ Описать (Describe)",
-				Action:        string(models.ActionDescribePod),
-				Parameters:    map[string]string{"pod": resourceName, "namespace": namespace},
-			},
 			models.SuggestedAction{
 				HumanReadable: "🗑️ Удалить",
 				Action:        string(models.ActionDeletePod),
