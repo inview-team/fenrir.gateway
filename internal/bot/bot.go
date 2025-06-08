@@ -113,7 +113,8 @@ func (b *Bot) startNotifier(notifChan <-chan *models.Incident) {
 
 func (b *Bot) handleHighSeverityIncident(chat *telebot.Chat, incident *models.Incident) {
 	// 1. Create a topic for the high-severity incident.
-	topic, err := b.bot.CreateTopic(chat, &telebot.Topic{Name: incident.Summary})
+	topicName := fmt.Sprintf("Инцидент #%d", incident.ID)
+	topic, err := b.bot.CreateTopic(chat, &telebot.Topic{Name: topicName})
 	if err != nil {
 		log.Printf("Failed to create topic for incident %d: %v. Falling back to main channel.", incident.ID, err)
 		b.handleLowSeverityIncident(chat, incident) // Fallback to standard notification.
@@ -260,7 +261,7 @@ func (b *Bot) handleListIncidents(c telebot.Context) error {
 	var keyboard [][]telebot.InlineButton
 	for _, inc := range incidents {
 		row := []telebot.InlineButton{{
-			Text: fmt.Sprintf("🚨 %s (%s)", inc.Summary, inc.Status),
+			Text: fmt.Sprintf("🚨 #%d %s (%s)", inc.ID, inc.Summary, inc.Status),
 			Data: viewIncidentPrefix + strconv.FormatUint(uint64(inc.ID), 10),
 		}}
 		keyboard = append(keyboard, row)
@@ -318,7 +319,7 @@ func (b *Bot) handleHistory(c telebot.Context) error {
 			icon = "❌"
 		}
 		row := []telebot.InlineButton{{
-			Text: fmt.Sprintf("%s %s (%s)", icon, inc.Summary, inc.Status),
+			Text: fmt.Sprintf("%s #%d %s (%s)", icon, inc.ID, inc.Summary, inc.Status),
 			Data: viewIncidentPrefix + strconv.FormatUint(uint64(inc.ID), 10),
 		}}
 		keyboard = append(keyboard, row)
@@ -982,7 +983,8 @@ func (b *Bot) formatIncidentMessage(incident *models.Incident, historyVisible bo
 	var builder strings.Builder
 
 	// Header
-	builder.WriteString(fmt.Sprintf("🚨 *Инцидент: %s* 🚨\n", escapeMarkdown(incident.Summary)))
+	alertName, _ := incident.Labels["alertname"]
+	builder.WriteString(fmt.Sprintf("🚨 *%s: %s* 🚨\n", escapeMarkdown(alertName), escapeMarkdown(incident.Summary)))
 
 	// Status and Severity
 	severity := "N/A"
