@@ -27,6 +27,11 @@ const (
 	allocateHardwarePrefix      = "ahw:"
 	toggleHistoryPrefix         = "th:"
 	listPodsForDeploymentPrefix = "lpfd:"
+	listContainersForPodPrefix  = "lcfp:"
+	getPodLogsPrefix            = "gpl:"
+	describePodPrefix           = "dp:"
+	describeDeploymentPrefix    = "dd:"
+	rollbackDeploymentPrefix    = "rbd:"
 )
 
 type awaitingInputState struct {
@@ -429,6 +434,16 @@ func (b *Bot) handleCallback(c telebot.Context) error {
 		return b.handleToggleHistory(c)
 	case listPodsForDeploymentPrefix:
 		return b.handleListPodsForDeployment(c)
+	case listContainersForPodPrefix:
+		return b.handleListContainersForPod(c)
+	case getPodLogsPrefix:
+		return b.handleGetPodLogs(c)
+	case describePodPrefix:
+		return b.handleDescribePod(c)
+	case describeDeploymentPrefix:
+		return b.handleDescribeDeployment(c)
+	case rollbackDeploymentPrefix:
+		return b.handleRollbackDeployment(c)
 	default:
 		return c.Respond()
 	}
@@ -758,20 +773,36 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 	}
 
 	switch actionType {
-	case models.ActionGetPodLogs, models.ActionDescribePod, models.ActionDescribeDeployment:
-		if len(result.Message) > 4096 {
-			result.Message = result.Message[:4090] + "\n..."
+	case models.ActionGetPodLogs:
+		if len(result.ResultData.Items) > 0 {
+			logs := result.ResultData.Items[0].Status
+			if len(logs) > 4096 {
+				doc := &telebot.Document{File: telebot.FromReader(strings.NewReader(logs)), FileName: "logs.txt"}
+				b.bot.Send(c.Chat(), doc)
+			} else {
+				formattedMessage := fmt.Sprintf("```\n%s\n```", logs)
+				sendOpts, err := b.getSendOptionsForIncident(c.Get("ctx").(context.Context), incidentID)
+				if err != nil {
+					log.Printf("Could not get send options for incident %d: %v", incidentID, err)
+					b.bot.Send(c.Chat(), formattedMessage, telebot.ModeMarkdown)
+					return nil
+				}
+				sendOpts.ParseMode = telebot.ModeMarkdown
+				b.bot.Send(c.Chat(), formattedMessage, sendOpts)
+			}
 		}
-		formattedMessage := fmt.Sprintf("```\n%s\n```", result.Message)
-		sendOpts, err := b.getSendOptionsForIncident(c.Get("ctx").(context.Context), incidentID)
-		if err != nil {
-			log.Printf("Could not get send options for incident %d: %v", incidentID, err)
-			b.bot.Send(c.Chat(), formattedMessage, telebot.ModeMarkdown)
-			return nil
+	case models.ActionDescribePod, models.ActionDescribeDeployment:
+		if len(result.ResultData.Items) > 0 {
+			description := result.ResultData.Items[0].Status
+			doc := &telebot.Document{File: telebot.FromReader(strings.NewReader(description)), FileName: "description.yaml"}
+			sendOpts, err := b.getSendOptionsForIncident(c.Get("ctx").(context.Context), incidentID)
+			if err != nil {
+				log.Printf("Could not get send options for incident %d: %v", incidentID, err)
+				b.bot.Send(c.Chat(), doc)
+				return nil
+			}
+			b.bot.Send(c.Chat(), doc, sendOpts)
 		}
-		sendOpts.ParseMode = telebot.ModeMarkdown
-		b.bot.Send(c.Chat(), formattedMessage, sendOpts)
-
 	case models.ActionDeletePod:
 		b.ignoreMu.Lock()
 		b.ignoreNextUpdateFor[incidentID] = true
@@ -978,11 +1009,19 @@ func (b *Bot) buildResourceActionsKeyboard(incident *models.Incident, resourceTy
 		namespace := incident.Labels["namespace"]
 		callbackData := fmt.Sprintf("%s%d:%s:%s:%s", scaleDeploymentPrefix, incidentID, resourceType, resourceName, namespace)
 		keyboard = append(keyboard, []telebot.InlineButton{{Text: "↔️ Масштабировать", Data: callbackData}})
+		describeCallbackData := fmt.Sprintf("%s%d:%s", describeDeploymentPrefix, incidentID, resourceName)
+		keyboard = append(keyboard, []telebot.InlineButton{{Text: "📖 Описать", Data: describeCallbackData}})
+		rollbackCallbackData := fmt.Sprintf("%s%d:%s", rollbackDeploymentPrefix, incidentID, resourceName)
+		keyboard = append(keyboard, []telebot.InlineButton{{Text: "⏪ Откатить", Data: rollbackCallbackData}})
 	}
 
 	if resourceType == "pod" {
 		callbackData := fmt.Sprintf("%s%d:%s:%s", allocateHardwarePrefix, incidentID, resourceType, resourceName)
 		keyboard = append(keyboard, []telebot.InlineButton{{Text: "⚙️ Выделить ресурсы", Data: callbackData}})
+		containersCallbackData := fmt.Sprintf("%s%d:%s", listContainersForPodPrefix, incidentID, resourceName)
+		keyboard = append(keyboard, []telebot.InlineButton{{Text: "Контейнеры", Data: containersCallbackData}})
+		describeCallbackData := fmt.Sprintf("%s%d:%s", describePodPrefix, incidentID, resourceName)
+		keyboard = append(keyboard, []telebot.InlineButton{{Text: "📖 Описать", Data: describeCallbackData}})
 	}
 
 	var backCallbackData string
@@ -1063,6 +1102,158 @@ func (b *Bot) handleListPodsForDeployment(c telebot.Context) error {
 		return c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
 	}
 	return b.showDynamicResourceList(c, uint(incidentID), listPodsResult)
+}
+
+func (b *Bot) handleListContainersForPod(c telebot.Context) error {
+	parts := strings.Split(c.Data(), ":")
+	incidentID, _ := strconv.ParseUint(parts[1], 10, 32)
+	podName := parts[2]
+
+	incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: "Incident not found"})
+	}
+
+	detailsReq := models.ResourceDetailsRequest{
+		IncidentID:   uint(incidentID),
+		ResourceType: "pod",
+		ResourceName: podName,
+		Labels:       incident.Labels,
+	}
+	details, err := b.service.GetResourceDetails(c.Get("ctx").(context.Context), detailsReq)
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: "Could not get pod details"})
+	}
+
+	var keyboard [][]telebot.InlineButton
+	for _, container := range details.Resources {
+		callbackData := fmt.Sprintf("%s%d:%s:%s", getPodLogsPrefix, incidentID, podName, container.Name)
+		keyboard = append(keyboard, []telebot.InlineButton{{Text: fmt.Sprintf("📄 %s", container.Name), Data: callbackData}})
+	}
+
+	backCallbackData := fmt.Sprintf("%s%d:%s:%s", viewResourcePrefix, incidentID, "pod", podName)
+	keyboard = append(keyboard, []telebot.InlineButton{{Text: "⬅️ Назад", Data: backCallbackData}})
+
+	return c.Edit("Выберите контейнер для просмотра логов:", &telebot.ReplyMarkup{InlineKeyboard: keyboard})
+}
+
+func (b *Bot) handleGetPodLogs(c telebot.Context) error {
+	parts := strings.Split(c.Data(), ":")
+	incidentID, _ := strconv.ParseUint(parts[1], 10, 32)
+	podName := parts[2]
+	containerName := parts[3]
+
+	incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: "Incident not found"})
+	}
+
+	user := c.Get("ctx").(context.Context).Value("user").(*models.User)
+	req := models.ActionRequest{
+		Action:     string(models.ActionGetPodLogs),
+		IncidentID: uint(incidentID),
+		UserID:     user.ID,
+		Parameters: map[string]string{
+			"pod_name":  podName,
+			"namespace": incident.Labels["namespace"],
+			"container": containerName,
+			"tail":      "100",
+		},
+	}
+
+	result, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), req)
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
+	}
+
+	return b.handleActionResult(c, uint(incidentID), req, result)
+}
+
+func (b *Bot) handleDescribePod(c telebot.Context) error {
+	parts := strings.Split(c.Data(), ":")
+	incidentID, _ := strconv.ParseUint(parts[1], 10, 32)
+	podName := parts[2]
+
+	incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: "Incident not found"})
+	}
+
+	user := c.Get("ctx").(context.Context).Value("user").(*models.User)
+	req := models.ActionRequest{
+		Action:     string(models.ActionDescribePod),
+		IncidentID: uint(incidentID),
+		UserID:     user.ID,
+		Parameters: map[string]string{
+			"pod_name":  podName,
+			"namespace": incident.Labels["namespace"],
+		},
+	}
+
+	result, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), req)
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
+	}
+
+	return b.handleActionResult(c, uint(incidentID), req, result)
+}
+
+func (b *Bot) handleDescribeDeployment(c telebot.Context) error {
+	parts := strings.Split(c.Data(), ":")
+	incidentID, _ := strconv.ParseUint(parts[1], 10, 32)
+	deploymentName := parts[2]
+
+	incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: "Incident not found"})
+	}
+
+	user := c.Get("ctx").(context.Context).Value("user").(*models.User)
+	req := models.ActionRequest{
+		Action:     string(models.ActionDescribeDeployment),
+		IncidentID: uint(incidentID),
+		UserID:     user.ID,
+		Parameters: map[string]string{
+			"deployment": deploymentName,
+			"namespace":  incident.Labels["namespace"],
+		},
+	}
+
+	result, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), req)
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
+	}
+
+	return b.handleActionResult(c, uint(incidentID), req, result)
+}
+
+func (b *Bot) handleRollbackDeployment(c telebot.Context) error {
+	parts := strings.Split(c.Data(), ":")
+	incidentID, _ := strconv.ParseUint(parts[1], 10, 32)
+	deploymentName := parts[2]
+
+	incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: "Incident not found"})
+	}
+
+	user := c.Get("ctx").(context.Context).Value("user").(*models.User)
+	req := models.ActionRequest{
+		Action:     string(models.ActionRollbackDeployment),
+		IncidentID: uint(incidentID),
+		UserID:     user.ID,
+		Parameters: map[string]string{
+			"deployment": deploymentName,
+			"namespace":  incident.Labels["namespace"],
+		},
+	}
+
+	result, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), req)
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
+	}
+
+	return b.handleActionResult(c, uint(incidentID), req, result)
 }
 
 func (b *Bot) formatIncidentMessage(incident *models.Incident, historyVisible bool) string {

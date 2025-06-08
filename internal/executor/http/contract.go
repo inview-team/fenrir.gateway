@@ -5,7 +5,7 @@ type Pod struct {
 	Status    string                `json:"status"`
 	Restarts  int                   `json:"restarts"`
 	Age       string                `json:"age"`
-	Resources []*ContainerResources `json:"resources"`
+	Resources []*ContainerResources `json:"containers"`
 }
 
 type ContainerResources struct {
