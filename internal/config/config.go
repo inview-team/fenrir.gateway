@@ -24,7 +24,6 @@ type ServerConfig struct {
 }
 
 type ExecutorConfig struct {
-	UseMock bool   `json:"use_mock"`
 	BaseURL string `json:"base_url"`
 }
 

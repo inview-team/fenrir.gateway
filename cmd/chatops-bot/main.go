@@ -10,7 +10,6 @@ import (
 	"chatops-bot/internal/bot"
 	"chatops-bot/internal/config"
 	"chatops-bot/internal/executor/http"
-	"chatops-bot/internal/executor/mock"
 	"chatops-bot/internal/models"
 	"chatops-bot/internal/server"
 	"chatops-bot/internal/service"
@@ -79,12 +78,7 @@ func main() {
 		log.Fatalf("Failed to create incident repository: %v", err)
 	}
 
-	var executorClient service.ExecutorClient
-	if cfg.Executor.UseMock {
-		executorClient = mock.NewExecutorClientMock()
-	} else {
-		executorClient = http.NewExecutorClient(cfg.Executor.BaseURL)
-	}
+	executorClient := http.NewExecutorClient(cfg.Executor.BaseURL)
 	actionSuggester := service.NewActionSuggester()
 
 	// Канал для уведомлений о новых инцидентах

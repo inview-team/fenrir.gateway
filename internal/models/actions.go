@@ -6,7 +6,6 @@ type ActionType string
 // Константы для всех поддерживаемых действий в системе.
 const (
 	// Действия уровня деплоймента
-	ActionRestartDeployment  ActionType = "restart_deployment"
 	ActionRollbackDeployment ActionType = "rollback_deployment"
 	ActionScaleDeployment    ActionType = "scale_deployment"
 	ActionDescribeDeployment ActionType = "describe_deployment"

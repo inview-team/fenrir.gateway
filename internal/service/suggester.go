@@ -27,11 +27,6 @@ func (s *ActionSuggester) SuggestActions(incident *models.Incident) []models.Sug
 				"namespace":  incident.AffectedResources["namespace"],
 			}
 			suggestions = append(suggestions, models.SuggestedAction{
-				HumanReadable: fmt.Sprintf("🔄 Перезапустить %s", deploymentName),
-				Action:        string(models.ActionRestartDeployment),
-				Parameters:    params,
-			})
-			suggestions = append(suggestions, models.SuggestedAction{
 				HumanReadable: fmt.Sprintf("⏪ Откатить %s", deploymentName),
 				Action:        string(models.ActionRollbackDeployment),
 				Parameters:    params,
@@ -66,11 +61,6 @@ func (s *ActionSuggester) SuggestActionsForResource(incident *models.Incident, r
 	case "deployment":
 		params := map[string]string{"deployment": resourceName, "namespace": namespace}
 		suggestions = append(suggestions,
-			models.SuggestedAction{
-				HumanReadable: "🔄 Перезапустить",
-				Action:        string(models.ActionRestartDeployment),
-				Parameters:    params,
-			},
 			models.SuggestedAction{
 				HumanReadable: "⏪ Откатить",
 				Action:        string(models.ActionRollbackDeployment),
