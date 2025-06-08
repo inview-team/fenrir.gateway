@@ -3,7 +3,7 @@
     "dsn": "chatops.db?_time_format=sqlite"
   },
   "server": {
-    "app_port": "8080",
+    "app_port": "8082",
     "alert_port": "8081",
     "webhook_token": ""
   },

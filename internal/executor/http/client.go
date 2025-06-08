@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -30,6 +31,9 @@ func (c *ExecutorClient) ExecuteAction(req models.ActionRequest) models.ActionRe
 		return res
 	case models.ActionScaleDeployment:
 		res, _ := c.scaleDeployment(context.Background(), req)
+		return res
+	case models.ActionGetPodInfo:
+		res, _ := c.getPodInfo(context.Background(), req)
 		return res
 	default:
 		return models.ActionResult{Error: "unsupported action"}
@@ -76,15 +80,57 @@ func (c *ExecutorClient) scaleDeployment(ctx context.Context, req models.ActionR
 	return models.ActionResult{Message: "Deployment scaled successfully"}, nil
 }
 
-func (c *ExecutorClient) GetResourceDetails(req models.ResourceDetailsRequest) (*models.ResourceDetails, error) {
-	// This is a mock implementation.
-	// In a real scenario, you would make an HTTP call to the executor to get resource details.
-	return &models.ResourceDetails{
-		Status:       "Unknown",
-		ReplicasInfo: "N/A",
-		Age:          "N/A",
-		RawOutput:    "Details not available via HTTP client yet.",
+func (c *ExecutorClient) getPodInfo(ctx context.Context, req models.ActionRequest) (models.ActionResult, error) {
+	url := fmt.Sprintf("%s/api/kubernetes/%s/deployments/%s", c.baseURL, req.Parameters["namespace"], req.Parameters["pod"])
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return models.ActionResult{}, err
+	}
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return models.ActionResult{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return models.ActionResult{Error: fmt.Sprintf("failed to get pod info: status code %d", resp.StatusCode)}, nil
+	}
+
+	var podInfo models.PodInfo
+	if err := json.NewDecoder(resp.Body).Decode(&podInfo); err != nil {
+		return models.ActionResult{}, err
+	}
+
+	return models.ActionResult{
+		Message:    "Pod info retrieved successfully",
+		ResultData: &models.ResultData{Type: "pod_info", ItemType: "pod_info", Items: []models.ResourceInfo{{Name: podInfo.Name, Status: podInfo.Status}}},
 	}, nil
+}
+
+func (c *ExecutorClient) GetResourceDetails(req models.ResourceDetailsRequest) (*models.ResourceDetails, error) {
+	url := fmt.Sprintf("%s/api/kubernetes/%s/deployments/%s", c.baseURL, req.Labels["namespace"], req.ResourceName)
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get resource details: status code %d", resp.StatusCode)
+	}
+
+	var details models.ResourceDetails
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return nil, err
+	}
+
+	return &details, nil
 }
 
 func (c *ExecutorClient) GetAvailableResources() (*models.AvailableResources, error) {

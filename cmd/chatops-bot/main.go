@@ -16,6 +16,7 @@ import (
 	"chatops-bot/internal/service"
 	storage_gorm "chatops-bot/internal/storage/gorm"
 
+	"github.com/joho/godotenv"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -25,6 +26,10 @@ import (
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found")
+	}
+
 	configPath := flag.String("config", "config.json", "Path to the configuration file")
 	flag.Parse()
 

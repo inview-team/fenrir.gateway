@@ -29,7 +29,7 @@ type ExecutorConfig struct {
 }
 
 type TelegramConfig struct {
-	BotToken       string `json:"bot_token"`
+	BotToken       string `json:"bot_token,omitempty"`
 	AlertChannelID int64  `json:"alert_channel_id"`
 }
 

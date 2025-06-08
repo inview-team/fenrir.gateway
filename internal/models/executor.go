@@ -11,8 +11,22 @@ type ResourceDetailsRequest struct {
 // ResourceDetails contains the detailed information about a resource.
 type ResourceDetails struct {
 	Status       string `json:"status"`
-	ReplicasInfo string `json:"replicas_info,omitempty"` // e.g., "2/3"
-	Restarts     string `json:"restarts,omitempty"`      // e.g., "5"
+	ReplicasInfo string `json:"replicas_info,omitempty"`
+	Restarts     string `json:"restarts,omitempty"`
 	Age          string `json:"age"`
-	RawOutput    string `json:"raw_output,omitempty"` // For any extra details
+	RawOutput    string `json:"raw_output"`
+}
+
+type PodInfo struct {
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Restarts  int    `json:"restarts"`
+	Age       string `json:"age"`
+	Resources []struct {
+		Name         string `json:"name"`
+		CpuUsage     int    `json:"cpuUsage"`
+		CpuLimits    int    `json:"cpuLimits"`
+		MemoryUsage  int    `json:"memoryUsage"`
+		MemoryLimits int    `json:"memoryLimits"`
+	} `json:"resources"`
 }

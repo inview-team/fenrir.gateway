@@ -21,6 +21,7 @@ const (
 
 	// Действия по управлению ресурсами
 	ActionAllocateHardware ActionType = "allocate_hardware"
+	ActionGetPodInfo       ActionType = "get_pod_info"
 )
 
 // ActionResult представляет стандартизированный результат выполнения действия.

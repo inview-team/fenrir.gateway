@@ -687,6 +687,10 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 		if result.ResultData != nil && len(result.ResultData.Items) > 0 {
 			return b.showDynamicResourceList(c, incidentID, result)
 		}
+	case models.ActionGetPodInfo:
+		if result.ResultData != nil && len(result.ResultData.Items) > 0 {
+			return b.showPodInfo(c, incidentID, result)
+		}
 	}
 
 	if req.Action == string(models.ActionScaleDeployment) || req.Action == string(models.ActionAllocateHardware) {
@@ -703,6 +707,21 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 	}
 
 	return b.showActionsView(c, incidentID, false)
+}
+
+func (b *Bot) showPodInfo(c telebot.Context, incidentID uint, result models.ActionResult) error {
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("*Pod Information: %s*\n\n", escapeMarkdown(result.ResultData.Items[0].Name)))
+	builder.WriteString(fmt.Sprintf("∙ *Status:* `%s`\n", escapeMarkdown(result.ResultData.Items[0].Status)))
+
+	keyboard := [][]telebot.InlineButton{
+		{
+			{Text: "⬅️ Назад", Data: showActionsPrefix + strconv.FormatUint(uint64(incidentID), 10)},
+			{Text: "🏠 К инциденту", Data: viewIncidentPrefix + strconv.FormatUint(uint64(incidentID), 10)},
+		},
+	}
+
+	return c.Edit(builder.String(), &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
 }
 
 func (b *Bot) showDynamicResourceList(c telebot.Context, incidentID uint, result models.ActionResult) error {
