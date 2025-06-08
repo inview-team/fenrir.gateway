@@ -37,7 +37,6 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// --- Инициализация и миграция БД ---
 	db, err := gorm.Open(sqlite.Open(cfg.DB.DSN), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -67,7 +66,6 @@ func main() {
 	}
 	log.Println("Database migrations applied successfully.")
 
-	// --- Инициализация зависимостей (Dependency Injection) ---
 	userRepo, err := storage_gorm.NewGormUserRepository(db)
 	if err != nil {
 		log.Fatalf("Failed to create user repository: %v", err)
@@ -81,7 +79,6 @@ func main() {
 	executorClient := http.NewExecutorClient(cfg.Executor.BaseURL)
 	actionSuggester := service.NewActionSuggester()
 
-	// Канал для уведомлений о новых инцидентах
 	notificationChan := make(chan *models.Incident, 10)
 	updateChan := make(chan *models.Incident, 10)
 	topicDeletionChan := make(chan *models.Incident, 10)
@@ -90,7 +87,6 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	// --- Запуск фонового процесса для удаления старых топиков ---
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -107,10 +103,8 @@ func main() {
 		}
 	}()
 
-	// --- Запуск серверов и бота ---
 	server.Start(context.Background(), incidentService, userRepo, cfg.Server.AppPort, cfg.Server.AlertPort, cfg.Server.WebhookToken)
 
-	// --- Запуск Telegram-бота ---
 	if cfg.Telegram.BotToken == "" {
 		log.Println("Telegram bot token is not set. Bot will not start.")
 	} else {

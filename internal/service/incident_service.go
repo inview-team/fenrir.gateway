@@ -12,18 +12,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// IncidentService предоставляет бизнес-логику для управления инцидентами.
 type IncidentService struct {
 	repo              IncidentRepository
 	userRepo          UserRepository
 	executor          ExecutorClient
 	suggester         *ActionSuggester
-	notificationChan  chan<- *models.Incident // Канал для отправки уведомлений
-	updateChan        chan<- *models.Incident // Канал для отправки обновлений
-	topicDeletionChan chan<- *models.Incident // Канал для удаления топиков
+	notificationChan  chan<- *models.Incident
+	updateChan        chan<- *models.Incident
+	topicDeletionChan chan<- *models.Incident
 }
 
-// NewIncidentService создает новый экземпляр IncidentService.
 func NewIncidentService(repo IncidentRepository, userRepo UserRepository, executor ExecutorClient, suggester *ActionSuggester, notifChan, updateChan, topicDeletionChan chan<- *models.Incident) *IncidentService {
 	return &IncidentService{
 		repo:              repo,
@@ -36,39 +34,29 @@ func NewIncidentService(repo IncidentRepository, userRepo UserRepository, execut
 	}
 }
 
-// GetIncidentByID находит инцидент по ID.
 func (s *IncidentService) GetIncidentByID(ctx context.Context, id uint) (*models.Incident, error) {
 	return s.repo.FindByID(ctx, id)
 }
 
-// ListActiveIncidents возвращает список активных инцидентов.
 func (s *IncidentService) ListActiveIncidents(ctx context.Context) ([]*models.Incident, error) {
 	return s.repo.ListActive(ctx)
 }
 
-// ListClosed возвращает список закрытых инцидентов.
 func (s *IncidentService) ListClosed(ctx context.Context, limit int, offset int) ([]*models.Incident, error) {
 	return s.repo.ListClosed(ctx, limit, offset)
 }
 
-// CreateIncidentFromAlert создает новый инцидент на основе данных из Alertmanager.
-// Если активный инцидент с таким же fingerprint уже существует, он будет возвращен.
 func (s *IncidentService) CreateIncidentFromAlert(ctx context.Context, alert models.Alert) (*models.Incident, error) {
-	// Проверяем, нет ли уже инцидента с таким же fingerprint.
 	existing, err := s.repo.FindByFingerprint(ctx, alert.Fingerprint)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		// Это какая-то другая ошибка базы данных, которую мы должны вернуть.
 		return nil, err
 	}
 
-	// Если ошибка `nil`, значит инцидент найден.
 	if err == nil && existing.Status == models.StatusActive {
 		log.Printf("Incident with fingerprint %s already exists and is active. Skipping creation.", alert.Fingerprint)
-		// Ничего не делаем, просто выходим. Можно было бы обновить существующий, но пока пропустим.
 		return existing, nil
 	}
 
-	// Извлекаем ключевые ресурсы из лейблов для быстрого доступа.
 	affectedResources := make(models.JSONBMap)
 	if val, ok := alert.Labels["deployment"]; ok {
 		affectedResources["deployment"] = val
@@ -96,7 +84,6 @@ func (s *IncidentService) CreateIncidentFromAlert(ctx context.Context, alert mod
 		return nil, err
 	}
 
-	// Отправляем уведомление о новом инциденте асинхронно
 	go func() {
 		s.notificationChan <- incident
 	}()
@@ -104,27 +91,22 @@ func (s *IncidentService) CreateIncidentFromAlert(ctx context.Context, alert mod
 	return incident, nil
 }
 
-// SetTelegramMessageID сохраняет идентификаторы сообщения Telegram для инцидента.
 func (s *IncidentService) SetTelegramMessageID(ctx context.Context, incidentID uint, chatID, messageID int64) error {
 	return s.repo.SetTelegramMessageID(ctx, incidentID, chatID, messageID)
 }
 
-// SetTelegramTopicID сохраняет идентификатор топика Telegram для инцидента.
 func (s *IncidentService) SetTelegramTopicID(ctx context.Context, incidentID uint, topicID int64) error {
 	return s.repo.SetTelegramTopicID(ctx, incidentID, topicID)
 }
 
-// ExecuteAction выполняет действие над инцидентом.
 func (s *IncidentService) ExecuteAction(ctx context.Context, req models.ActionRequest) (models.ActionResult, error) {
 	incident, err := s.repo.FindByID(ctx, req.IncidentID)
 	if err != nil {
 		return models.ActionResult{Error: "Incident not found"}, err
 	}
 
-	// Выполняем действие через executor
 	result := s.executor.ExecuteAction(req)
 
-	// Записываем в лог аудита
 	entry := models.AuditRecord{
 		IncidentID: req.IncidentID,
 		UserID:     req.UserID,
@@ -135,34 +117,27 @@ func (s *IncidentService) ExecuteAction(ctx context.Context, req models.ActionRe
 		Result:     result.Message,
 	}
 
-	// Добавляем информацию о затронутом ресурсе, если она есть
 	addAffectedResourceToAudit(&entry, req)
 
 	incident.AuditLog = append(incident.AuditLog, entry)
 
 	if err := s.repo.Update(ctx, incident); err != nil {
-		return result, err // Возвращаем результат действия, но и ошибку сохранения
+		return result, err
 	}
 
-	// Отправляем обновленный инцидент в канал
 	s.updateChan <- incident
 
 	return result, nil
 }
 
-// GetResourceDetails получает детали ресурса от Executor'а.
 func (s *IncidentService) GetResourceDetails(ctx context.Context, req models.ResourceDetailsRequest) (*models.ResourceDetails, error) {
-	// В будущем здесь может быть дополнительная логика,
-	// например, проверка прав доступа пользователя к этому ресурсу.
 	return s.executor.GetResourceDetails(req)
 }
 
-// GetAvailableResources получает доступные профили ресурсов от Executor'а.
 func (s *IncidentService) GetAvailableResources(ctx context.Context) (*models.AvailableResources, error) {
 	return s.executor.GetAvailableResources()
 }
 
-// DeleteOldIncidentTopics находит старые закрытые инциденты и инициирует удаление их топиков.
 func (s *IncidentService) DeleteOldIncidentTopics(ctx context.Context, retention time.Duration) {
 	threshold := time.Now().Add(-retention)
 	incidents, err := s.repo.FindClosedBefore(ctx, threshold)
@@ -179,7 +154,6 @@ func (s *IncidentService) DeleteOldIncidentTopics(ctx context.Context, retention
 	}
 }
 
-// UpdateStatus изменяет статус инцидента и добавляет запись в лог аудита.
 func (s *IncidentService) UpdateStatus(ctx context.Context, userID, incidentID uint, status models.IncidentStatus, reason string) error {
 	incident, err := s.repo.FindByID(ctx, incidentID)
 	if err != nil {
@@ -215,7 +189,6 @@ func (s *IncidentService) UpdateStatus(ctx context.Context, userID, incidentID u
 
 	err = s.repo.Update(ctx, incident)
 	if err == nil {
-		// Отправляем обновленный инцидент в канал
 		s.updateChan <- incident
 	}
 	return err

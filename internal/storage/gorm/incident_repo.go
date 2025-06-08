@@ -10,12 +10,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// GormIncidentRepository - это реализация IncidentRepository с использованием GORM.
 type GormIncidentRepository struct {
 	db *gorm.DB
 }
 
-// NewGormIncidentRepository создает новый экземпляр репозитория инцидентов.
 func NewGormIncidentRepository(db *gorm.DB) (service.IncidentRepository, error) {
 	return &GormIncidentRepository{db: db}, nil
 }
@@ -26,7 +24,6 @@ func (r *GormIncidentRepository) Create(ctx context.Context, incident *models.In
 
 func (r *GormIncidentRepository) FindByID(ctx context.Context, id uint) (*models.Incident, error) {
 	var incident models.Incident
-	// Используем Preload для загрузки связанных данных пользователя, чтобы избежать N+1 запросов.
 	err := r.db.WithContext(ctx).Preload("AuditLog.User").Preload("ResolvedByUser").First(&incident, id).Error
 	return &incident, err
 }
@@ -47,8 +44,6 @@ func (r *GormIncidentRepository) ListActive(ctx context.Context) ([]*models.Inci
 	return incidents, err
 }
 
-// ListClosed возвращает список закрытых инцидентов с пагинацией.
-// ListClosed возвращает список закрытых инцидентов с пагинацией.
 func (r *GormIncidentRepository) ListClosed(ctx context.Context, limit int, offset int) ([]*models.Incident, error) {
 	var incidents []*models.Incident
 	err := r.db.WithContext(ctx).

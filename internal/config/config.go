@@ -33,8 +33,8 @@ type TelegramConfig struct {
 }
 
 type IncidentServiceConfig struct {
-	TopicDeletionInterval int64 `json:"topic_deletion_interval"` // in seconds
-	TopicMaxAge           int64 `json:"topic_max_age"`           // in seconds
+	TopicDeletionInterval int64 `json:"topic_deletion_interval"`
+	TopicMaxAge           int64 `json:"topic_max_age"`
 }
 
 func Load(path string) (*Config, error) {

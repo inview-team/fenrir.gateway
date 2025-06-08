@@ -1,14 +1,12 @@
 package models
 
-// ResourceDetailsRequest defines the request to get details for a specific resource.
 type ResourceDetailsRequest struct {
 	IncidentID   uint              `json:"incident_id"`
 	ResourceType string            `json:"resource_type"`
 	ResourceName string            `json:"resource_name"`
-	Labels       map[string]string `json:"labels"` // For context, e.g., namespace
+	Labels       map[string]string `json:"labels"`
 }
 
-// ResourceDetails contains the detailed information about a resource.
 type ResourceDetails struct {
 	Status       string               `json:"status"`
 	ReplicasInfo string               `json:"replicas_info,omitempty"`

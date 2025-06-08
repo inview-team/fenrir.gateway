@@ -1,2 +1,5 @@
 fenrir.executor-master/
 .env
+.yml
+chatops-bot
+config.json

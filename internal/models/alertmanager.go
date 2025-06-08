@@ -2,12 +2,11 @@ package models
 
 import "time"
 
-// AlertmanagerWebhookMessage - это корневая структура сообщения от Alertmanager.
 type AlertmanagerWebhookMessage struct {
 	Version           string            `json:"version"`
 	GroupKey          string            `json:"groupKey"`
 	TruncatedAlerts   int               `json:"truncatedAlerts"`
-	Status            string            `json:"status"` // "firing" or "resolved"
+	Status            string            `json:"status"`
 	Receiver          string            `json:"receiver"`
 	GroupLabels       map[string]string `json:"groupLabels"`
 	CommonLabels      map[string]string `json:"commonLabels"`
@@ -16,13 +15,10 @@ type AlertmanagerWebhookMessage struct {
 	Alerts            []Alert           `json:"alerts"`
 }
 
-// Labels - это набор пар ключ-значение, идентифицирующих алерт.
 type Labels map[string]string
 
-// Annotations - это набор информационных пар ключ-значение.
 type Annotations map[string]string
 
-// Alert представляет собой отдельный алерт в сообщении.
 type Alert struct {
 	Status       string      `json:"status"`
 	Labels       Labels      `json:"labels"`

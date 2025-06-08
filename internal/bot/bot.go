@@ -15,7 +15,6 @@ import (
 	"gopkg.in/telebot.v3"
 )
 
-// Callback Prefixes
 const (
 	viewIncidentPrefix          = "vi:"
 	showActionsPrefix           = "sa:"
@@ -30,7 +29,6 @@ const (
 	listPodsForDeploymentPrefix = "lpfd:"
 )
 
-// State for awaiting user input
 type awaitingInputState struct {
 	Request   *models.ActionRequest
 	MessageID int
@@ -57,7 +55,6 @@ type Bot struct {
 	ignoreMu            sync.Mutex
 }
 
-// isHighSeverity checks if an incident has a severity label of "critical" or "high".
 func isHighSeverity(incident *models.Incident) bool {
 	if severity, ok := incident.Labels["severity"]; ok {
 		return severity == "critical" || severity == "high"
@@ -115,17 +112,15 @@ func (b *Bot) startNotifier(notifChan <-chan *models.Incident) {
 }
 
 func (b *Bot) handleHighSeverityIncident(chat *telebot.Chat, incident *models.Incident) {
-	// 1. Create a topic for the high-severity incident.
 	topicName := fmt.Sprintf("Инцидент #%d", incident.ID)
 	topic, err := b.bot.CreateTopic(chat, &telebot.Topic{Name: topicName})
 	if err != nil {
 		log.Printf("Failed to create topic for incident %d: %v. Falling back to main channel.", incident.ID, err)
-		b.handleLowSeverityIncident(chat, incident) // Fallback to standard notification.
+		b.handleLowSeverityIncident(chat, incident)
 		return
 	}
 	b.service.SetTelegramTopicID(context.Background(), incident.ID, int64(topic.ThreadID))
 
-	// 2. Send the fully formatted message with keyboard directly to the topic.
 	message := b.formatIncidentMessage(incident, false)
 	suggestedActions := b.suggester.SuggestActions(incident)
 	keyboard := b.buildActionsViewKeyboard(incident, suggestedActions, false)
@@ -141,11 +136,9 @@ func (b *Bot) handleHighSeverityIncident(chat *telebot.Chat, incident *models.In
 		return
 	}
 
-	// 3. Save the message ID for future updates and register the view.
 	b.service.SetTelegramMessageID(context.Background(), incident.ID, msg.Chat.ID, int64(msg.ID))
 	b.addIncidentView(incident.ID, msg)
 
-	// 4. Send a separate, full-content message to the main channel with a button to jump to the topic.
 	summaryMessage := b.formatIncidentMessage(incident, false)
 	channelIDForLink := strings.TrimPrefix(strconv.FormatInt(b.alertChannelID, 10), "-100")
 	topicURL := fmt.Sprintf("https://t.me/c/%s/%d", channelIDForLink, topic.ThreadID)
@@ -160,7 +153,6 @@ func (b *Bot) handleHighSeverityIncident(chat *telebot.Chat, incident *models.In
 	if err != nil {
 		log.Printf("Failed to send summary notification to channel %d: %v", b.alertChannelID, err)
 	} else {
-		// Register the summary message as well, so it can be updated.
 		b.addIncidentView(incident.ID, summaryMsg)
 	}
 }
@@ -181,15 +173,12 @@ func (b *Bot) startTopicDeletionListener(deletionChan <-chan *models.Incident) {
 			log.Printf("Failed to delete topic %d for incident %d: %v", topic.ThreadID, incident.ID, err)
 		} else {
 			log.Printf("Successfully deleted topic %d for incident %d.", topic.ThreadID, incident.ID)
-			// После успешного удаления топика, можно убрать ID из инцидента в БД,
-			// чтобы избежать повторных попыток удаления.
-			b.service.SetTelegramTopicID(context.Background(), incident.ID, 0) // 0 или какое-то другое невалидное значение
+			b.service.SetTelegramTopicID(context.Background(), incident.ID, 0)
 		}
 	}
 }
 
 func (b *Bot) handleLowSeverityIncident(chat *telebot.Chat, incident *models.Incident) {
-	// Send the fully formatted message with keyboard directly to the main channel.
 	message := b.formatIncidentMessage(incident, false)
 	suggestedActions := b.suggester.SuggestActions(incident)
 	keyboard := b.buildActionsViewKeyboard(incident, suggestedActions, false)
@@ -204,7 +193,6 @@ func (b *Bot) handleLowSeverityIncident(chat *telebot.Chat, incident *models.Inc
 		return
 	}
 
-	// Save the message ID for future updates and register the view.
 	b.service.SetTelegramMessageID(context.Background(), incident.ID, msg.Chat.ID, int64(msg.ID))
 	b.addIncidentView(incident.ID, msg)
 }
@@ -228,7 +216,6 @@ func (b *Bot) startUpdateListener(updateChan <-chan *models.Incident) {
 			continue
 		}
 
-		// It's better to fetch the latest incident state before rendering
 		freshIncident, err := b.service.GetIncidentByID(context.Background(), incident.ID)
 		if err != nil {
 			log.Printf("Error fetching incident %d for update: %v", incident.ID, err)
@@ -779,7 +766,6 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 		sendOpts, err := b.getSendOptionsForIncident(c.Get("ctx").(context.Context), incidentID)
 		if err != nil {
 			log.Printf("Could not get send options for incident %d: %v", incidentID, err)
-			// Fallback to sending in the same chat without a specific topic
 			b.bot.Send(c.Chat(), formattedMessage, telebot.ModeMarkdown)
 			return nil
 		}
@@ -1082,11 +1068,9 @@ func (b *Bot) handleListPodsForDeployment(c telebot.Context) error {
 func (b *Bot) formatIncidentMessage(incident *models.Incident, historyVisible bool) string {
 	var builder strings.Builder
 
-	// Header
 	alertName, _ := incident.Labels["alertname"]
 	builder.WriteString(fmt.Sprintf("🚨 *%s: %s* 🚨\n", escapeMarkdown(alertName), escapeMarkdown(incident.Summary)))
 
-	// Status and Severity
 	severity := "N/A"
 	if s, ok := incident.Labels["severity"]; ok {
 		severity = s
@@ -1094,7 +1078,6 @@ func (b *Bot) formatIncidentMessage(incident *models.Incident, historyVisible bo
 	builder.WriteString(fmt.Sprintf("*Статус:* `%s` \\| *Серьезность:* `%s`\n", incident.Status, severity))
 	builder.WriteString("━━━━━━━━━━━━━━━\n")
 
-	// Details
 	builder.WriteString("*📋 Детали:*\n")
 	builder.WriteString(fmt.Sprintf("∙ *Описание:* %s\n", escapeMarkdown(incident.Description)))
 	if namespace, ok := incident.Labels["namespace"]; ok {
@@ -1103,7 +1086,6 @@ func (b *Bot) formatIncidentMessage(incident *models.Incident, historyVisible bo
 	builder.WriteString(fmt.Sprintf("∙ *Начало:* `%s`\n", incident.StartsAt.Format(time.RFC1123)))
 	builder.WriteString("━━━━━━━━━━━━━━━\n")
 
-	// Resources
 	builder.WriteString("*🛠 Ресурсы:*\n")
 	if deployment, ok := incident.AffectedResources["deployment"]; ok {
 		builder.WriteString(fmt.Sprintf("∙ *Deployment:* `%s`\n", escapeMarkdown(deployment)))
@@ -1113,7 +1095,6 @@ func (b *Bot) formatIncidentMessage(incident *models.Incident, historyVisible bo
 	}
 	builder.WriteString("━━━━━━━━━━━━━━━\n")
 
-	// Audit Log
 	builder.WriteString("*📖 История действий:*\n")
 	if len(incident.AuditLog) > 0 {
 		if historyVisible {
@@ -1125,7 +1106,6 @@ func (b *Bot) formatIncidentMessage(incident *models.Incident, historyVisible bo
 					escapeMarkdown(entry.User.Username),
 					escapeMarkdown(entry.Result),
 				))
-				// Keep additional details for specific actions
 				if entry.Action == "update_status" {
 					if reason, ok := entry.Parameters["reason"]; ok && reason != "" {
 						builder.WriteString(fmt.Sprintf("  *Причина:* %s\n", escapeMarkdown(reason)))
@@ -1262,7 +1242,6 @@ func (b *Bot) updateIncidentView(incident *models.Incident) {
 		return
 	}
 
-	// For simplicity, we assume history is not visible on automatic updates.
 	historyVisible := false
 	message := b.formatIncidentMessage(incident, historyVisible)
 
@@ -1271,22 +1250,17 @@ func (b *Bot) updateIncidentView(incident *models.Incident) {
 		var keyboard [][]telebot.InlineButton
 		msgSig, _ := editable.MessageSig()
 
-		// The main message in the topic gets the full keyboard.
-		// The summary message in the general channel gets a limited keyboard.
 		if incident.TelegramMessageID.Valid && msgSig == strconv.FormatInt(incident.TelegramMessageID.Int64, 10) {
 			keyboard = b.buildIncidentViewKeyboard(incident, historyVisible)
 		} else if isHighSeverity(incident) {
-			// This is a summary message for a high-severity incident.
 			keyboard = b.buildSummaryViewKeyboard(incident, historyVisible)
 		} else {
-			// This is a low-severity incident message.
 			keyboard = b.buildIncidentViewKeyboard(incident, historyVisible)
 		}
 
 		_, err := b.bot.Edit(editable, message, &telebot.ReplyMarkup{InlineKeyboard: keyboard}, telebot.ModeMarkdownV2)
 		if err != nil {
 			if strings.Contains(err.Error(), "message is not modified") {
-				// Not an error, just no change needed.
 			} else if strings.Contains(err.Error(), "message to edit not found") {
 				log.Printf("View %s for incident %d not found, cannot update.", key, incident.ID)
 			} else {
@@ -1307,13 +1281,12 @@ func (b *Bot) handleToggleHistory(c telebot.Context) error {
 	parts := strings.Split(c.Data(), ":")
 	incidentID, _ := strconv.ParseUint(parts[1], 10, 32)
 	historyVisible, _ := strconv.ParseBool(parts[2])
-	viewType := parts[3] // "main" or "actions"
+	viewType := parts[3]
 
 	if viewType == "actions" {
 		return b.showActionsView(c, uint(incidentID), historyVisible)
 	}
 	if viewType == "summary" {
-		// This is a summary message, so we need to show the summary view.
 		incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
 		if err != nil {
 			return c.EditOrSend("Не удалось найти инцидент.")

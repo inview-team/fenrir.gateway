@@ -7,19 +7,15 @@ import (
 	"chatops-bot/internal/models"
 )
 
-// ActionSuggester отвечает за генерацию предложений по действиям на основе данных инцидента.
 type ActionSuggester struct{}
 
-// NewActionSuggester создает новый экземпляр ActionSuggester.
 func NewActionSuggester() *ActionSuggester {
 	return &ActionSuggester{}
 }
 
-// SuggestActions генерирует список предлагаемых действий для "быстрого пути".
 func (s *ActionSuggester) SuggestActions(incident *models.Incident) []models.SuggestedAction {
 	var suggestions []models.SuggestedAction
 
-	// Правило 1: Проблема с репликами деплоймента
 	if alertName, ok := incident.Labels["alertname"]; ok && alertName == "KubeDeploymentReplicasMismatch" {
 		if deploymentName, ok := incident.AffectedResources["deployment"]; ok {
 			params := map[string]string{
@@ -34,7 +30,6 @@ func (s *ActionSuggester) SuggestActions(incident *models.Incident) []models.Sug
 		}
 	}
 
-	// Правило 2: Pod в состоянии CrashLoopBackOff
 	if alertName, ok := incident.Labels["alertname"]; ok && alertName == "KubePodCrashLooping" {
 		if podName, ok := incident.AffectedResources["pod"]; ok {
 			suggestions = append(suggestions, models.SuggestedAction{
@@ -52,7 +47,6 @@ func (s *ActionSuggester) SuggestActions(incident *models.Incident) []models.Sug
 	return suggestions
 }
 
-// SuggestActionsForResource генерирует действия для конкретного выбранного ресурса.
 func (s *ActionSuggester) SuggestActionsForResource(incident *models.Incident, resourceType, resourceName string) []models.SuggestedAction {
 	var suggestions []models.SuggestedAction
 	namespace := incident.AffectedResources["namespace"]

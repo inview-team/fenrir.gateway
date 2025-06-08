@@ -16,7 +16,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// Start запускает оба HTTP-сервера: для API и для вебхуков Alertmanager.
 func Start(ctx context.Context, service *service.IncidentService, userRepo service.UserRepository, appPort, alertPort, webhookToken string) {
 	go func() {
 		log.Printf("Starting main API server on port %s", appPort)
@@ -35,7 +34,6 @@ func Start(ctx context.Context, service *service.IncidentService, userRepo servi
 	}()
 }
 
-// newRouter создает роутер для основного API (для Mini App).
 func newRouter(service *service.IncidentService, userRepo service.UserRepository) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -48,7 +46,6 @@ func newRouter(service *service.IncidentService, userRepo service.UserRepository
 	return r
 }
 
-// newAlertmanagerRouter создает роутер для вебхуков от Alertmanager.
 func newAlertmanagerRouter(service *service.IncidentService, token string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -61,14 +58,9 @@ func newAlertmanagerRouter(service *service.IncidentService, token string) http.
 	return r
 }
 
-// --- Middlewares ---
-
 func authMiddleware(userRepo service.UserRepository) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Для API, используемого Mini App, можно использовать моковые данные или
-			// реализовать полноценную аутентификацию через Telegram.
-			// Пока используем мок.
 			const mockTelegramID = 123456789
 			const mockUsername = "api_user"
 			user, err := userRepo.FindOrCreateByTelegramID(r.Context(), mockTelegramID, mockUsername, "API", "User")
@@ -85,7 +77,7 @@ func authMiddleware(userRepo service.UserRepository) func(http.Handler) http.Han
 func webhookAuthMiddleware(expectedToken string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if expectedToken == "" { // Если токен не задан, пропускаем проверку
+			if expectedToken == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -107,8 +99,6 @@ func webhookAuthMiddleware(expectedToken string) func(http.Handler) http.Handler
 		})
 	}
 }
-
-// --- Handlers ---
 
 func handleGetIncident(service *service.IncidentService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
