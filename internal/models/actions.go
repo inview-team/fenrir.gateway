@@ -36,8 +36,9 @@ type ActionResult struct {
 
 // ResourceInfo содержит краткую информацию о ресурсе.
 type ResourceInfo struct {
-	Name   string `json:"name"`
-	Status string `json:"status,omitempty"`
+	Name      string               `json:"name"`
+	Status    string               `json:"status,omitempty"`
+	Resources []ContainerResources `json:"resources,omitempty"`
 }
 
 // ResultData содержит структурированные данные, возвращаемые действием.

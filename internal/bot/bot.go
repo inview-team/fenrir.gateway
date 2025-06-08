@@ -593,6 +593,21 @@ func (b *Bot) renderResourceActionsView(c telebot.Context, incidentID uint, reso
 			}
 			messageBuilder.WriteString(fmt.Sprintf("∙ *Возраст:* `%s`\n", escapeMarkdown(details.Age)))
 		}
+
+		if len(details.Resources) > 0 {
+			messageBuilder.WriteString("*Потребление ресурсов:*\n")
+			for _, res := range details.Resources {
+				cpuUsage := float64(res.CpuUsage) / 1000
+				memoryUsage := float64(res.MemoryUsage) / 1024 / 1024
+				messageBuilder.WriteString(fmt.Sprintf(
+					"  ∙ *Контейнер:* `%s`\n    ∙ *CPU:* `%.2f` cores\n    ∙ *Memory:* `%.2f` MiB\n",
+					escapeMarkdown(res.Name),
+					cpuUsage,
+					memoryUsage,
+				))
+			}
+		}
+
 		messageBuilder.WriteString("\n")
 	}
 

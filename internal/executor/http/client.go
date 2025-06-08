@@ -116,8 +116,9 @@ func (c *ExecutorClient) getPodInfo(ctx context.Context, req models.ActionReques
 			ItemType: "pod_info",
 			Items: []models.ResourceInfo{
 				{
-					Name:   podInfo.Name,
-					Status: podInfo.Status,
+					Name:      podInfo.Name,
+					Status:    podInfo.Status,
+					Resources: convertResources(podInfo.Resources),
 				},
 			},
 		},
@@ -190,9 +191,10 @@ func (c *ExecutorClient) GetResourceDetails(req models.ResourceDetailsRequest) (
 			return nil, err
 		}
 		return &models.ResourceDetails{
-			Status:   pod.Status,
-			Restarts: pod.Restarts,
-			Age:      pod.Age,
+			Status:    pod.Status,
+			Restarts:  pod.Restarts,
+			Age:       pod.Age,
+			Resources: convertResources(pod.Resources),
 		}, nil
 	}
 
@@ -257,4 +259,21 @@ func (c *ExecutorClient) GetAvailableResources() (*models.AvailableResources, er
 			{Name: "large", Description: "4 CPU, 8Gi RAM"},
 		},
 	}, nil
+}
+
+func convertResources(res []*ContainerResources) []models.ContainerResources {
+	if res == nil {
+		return nil
+	}
+	result := make([]models.ContainerResources, len(res))
+	for i, r := range res {
+		result[i] = models.ContainerResources{
+			Name:         r.Name,
+			CpuUsage:     r.CpuUsage,
+			MemoryUsage:  r.MemoryUsage,
+			CpuLimits:    r.CpuLimits,
+			MemoryLimits: r.MemoryLimits,
+		}
+	}
+	return result
 }
