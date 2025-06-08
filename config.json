@@ -1,0 +1,21 @@
+{
+  "db": {
+    "dsn": "chatops.db?_time_format=sqlite"
+  },
+  "server": {
+    "app_port": "8082",
+    "alert_port": "8081",
+    "webhook_token": ""
+  },
+  "executor": {
+    "use_mock": false,
+    "base_url": "http://localhost:30000"
+  },
+  "telegram": {
+    "alert_channel_id": -1002653225718
+  },
+  "incident_service": {
+    "topic_deletion_interval": 60,
+    "topic_max_age": 60
+  }
+}
