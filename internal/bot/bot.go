@@ -27,6 +27,7 @@ const (
 	scaleDeploymentPrefix       = "scd:"
 	allocateHardwarePrefix      = "ahw:"
 	toggleHistoryPrefix         = "th:"
+	listPodsForDeploymentPrefix = "lpfd:"
 )
 
 // State for awaiting user input
@@ -358,6 +359,8 @@ func (b *Bot) handleCallback(c telebot.Context) error {
 		return b.handleAllocateHardware(c)
 	case toggleHistoryPrefix:
 		return b.handleToggleHistory(c)
+	case listPodsForDeploymentPrefix:
+		return b.handleListPodsForDeployment(c)
 	default:
 		return c.Respond()
 	}
@@ -497,14 +500,18 @@ func (b *Bot) renderResourceActionsView(c telebot.Context, incidentID uint, reso
 		log.Printf("Could not get resource details: %v", err)
 		messageBuilder.WriteString("_Не удалось загрузить детали ресурса\\._\n\n")
 	} else {
-		messageBuilder.WriteString(fmt.Sprintf("∙ *Статус:* `%s`\n", escapeMarkdown(details.Status)))
-		if details.ReplicasInfo != "" {
+		if resourceType == "deployment" {
 			messageBuilder.WriteString(fmt.Sprintf("∙ *Реплики:* `%s`\n", escapeMarkdown(details.ReplicasInfo)))
+		} else {
+			messageBuilder.WriteString(fmt.Sprintf("∙ *Статус:* `%s`\n", escapeMarkdown(details.Status)))
+			if details.ReplicasInfo != "" {
+				messageBuilder.WriteString(fmt.Sprintf("∙ *Реплики:* `%s`\n", escapeMarkdown(details.ReplicasInfo)))
+			}
+			if details.Restarts > 0 {
+				messageBuilder.WriteString(fmt.Sprintf("∙ *Перезапуски:* `%d`\n", details.Restarts))
+			}
+			messageBuilder.WriteString(fmt.Sprintf("∙ *Возраст:* `%s`\n", escapeMarkdown(details.Age)))
 		}
-		if details.Restarts != "" {
-			messageBuilder.WriteString(fmt.Sprintf("∙ *Перезапуски:* `%s`\n", escapeMarkdown(details.Restarts)))
-		}
-		messageBuilder.WriteString(fmt.Sprintf("∙ *Возраст:* `%s`\n", escapeMarkdown(details.Age)))
 		messageBuilder.WriteString("\n")
 	}
 
@@ -683,8 +690,27 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 		sendOpts.ParseMode = telebot.ModeMarkdown
 		b.bot.Send(c.Chat(), formattedMessage, sendOpts)
 
+	case models.ActionDeletePod:
+		incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), incidentID)
+		if err != nil {
+			return c.Respond(&telebot.CallbackResponse{Text: "Incident not found"})
+		}
+		listPodsReq := models.ActionRequest{
+			Action:     string(models.ActionListPodsForDeployment),
+			IncidentID: incidentID,
+			UserID:     req.UserID,
+			Parameters: map[string]string{
+				"deployment": incident.AffectedResources["deployment"],
+				"namespace":  incident.AffectedResources["namespace"],
+			},
+		}
+		listPodsResult, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), listPodsReq)
+		if err != nil {
+			return c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
+		}
+		return b.showDynamicResourceList(c, incidentID, listPodsResult)
 	case models.ActionListPodsForDeployment:
-		if result.ResultData != nil && len(result.ResultData.Items) > 0 {
+		if result.ResultData != nil {
 			return b.showDynamicResourceList(c, incidentID, result)
 		}
 	case models.ActionGetPodInfo:
@@ -703,7 +729,11 @@ func (b *Bot) handleActionResult(c telebot.Context, incidentID uint, req models.
 	}
 
 	if strings.HasPrefix(callbackData, performResourceActionPrefix) {
-		return b.showResourceActionsView(c)
+		incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), incidentID)
+		if err != nil {
+			return c.Respond(&telebot.CallbackResponse{Text: "Incident not found"})
+		}
+		return b.renderResourceActionsView(c, incidentID, "deployment", incident.AffectedResources["deployment"], nil, nil)
 	}
 
 	return b.showActionsView(c, incidentID, false)
@@ -725,7 +755,11 @@ func (b *Bot) showPodInfo(c telebot.Context, incidentID uint, result models.Acti
 }
 
 func (b *Bot) showDynamicResourceList(c telebot.Context, incidentID uint, result models.ActionResult) error {
+	log.Printf("showDynamicResourceList called for incident %d", incidentID)
 	var keyboard [][]telebot.InlineButton
+	if len(result.ResultData.Items) == 0 {
+		result.Message = "No pods found for this deployment."
+	}
 	for _, item := range result.ResultData.Items {
 		statusIcon := "🟢"
 		if item.Status != "Running" {
@@ -742,7 +776,7 @@ func (b *Bot) showDynamicResourceList(c telebot.Context, incidentID uint, result
 	}
 
 	keyboard = append(keyboard, []telebot.InlineButton{
-		{Text: "⬅️ Назад", Data: showActionsPrefix + strconv.FormatUint(uint64(incidentID), 10)},
+		{Text: "⬅️ Назад", Data: fmt.Sprintf("%s%d:%s:%s", viewResourcePrefix, incidentID, "deployment", incident.AffectedResources["deployment"])},
 		{Text: "🏠 К инциденту", Data: viewIncidentPrefix + strconv.FormatUint(uint64(incidentID), 10)},
 	})
 
@@ -868,8 +902,20 @@ func (b *Bot) buildResourceActionsKeyboard(incident *models.Incident, resourceTy
 		keyboard = append(keyboard, []telebot.InlineButton{{Text: "⚙️ Выделить ресурсы", Data: callbackData}})
 	}
 
+	var backCallbackData string
+	if resourceType == "pod" {
+		deploymentName, ok := incident.AffectedResources["deployment"]
+		if !ok {
+			backCallbackData = showActionsPrefix + strconv.FormatUint(uint64(incidentID), 10)
+		} else {
+			backCallbackData = fmt.Sprintf("%s%d:%s", listPodsForDeploymentPrefix, incidentID, deploymentName)
+		}
+	} else {
+		backCallbackData = showActionsPrefix + strconv.FormatUint(uint64(incidentID), 10)
+	}
+
 	keyboard = append(keyboard, []telebot.InlineButton{
-		{Text: "⬅️ Назад", Data: showActionsPrefix + strconv.FormatUint(uint64(incidentID), 10)},
+		{Text: "⬅️ Назад", Data: backCallbackData},
 		{Text: "🏠 К инциденту", Data: viewIncidentPrefix + strconv.FormatUint(uint64(incidentID), 10)},
 	})
 
@@ -907,6 +953,33 @@ func (b *Bot) authMiddleware() telebot.MiddlewareFunc {
 			return next(c)
 		}
 	}
+}
+
+func (b *Bot) handleListPodsForDeployment(c telebot.Context) error {
+	parts := strings.Split(c.Data(), ":")
+	incidentID, _ := strconv.ParseUint(parts[1], 10, 32)
+	deploymentName := parts[2]
+
+	incident, err := b.service.GetIncidentByID(c.Get("ctx").(context.Context), uint(incidentID))
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: "Incident not found"})
+	}
+
+	user := c.Get("ctx").(context.Context).Value("user").(*models.User)
+	listPodsReq := models.ActionRequest{
+		Action:     string(models.ActionListPodsForDeployment),
+		IncidentID: uint(incidentID),
+		UserID:     user.ID,
+		Parameters: map[string]string{
+			"deployment": deploymentName,
+			"namespace":  incident.Labels["namespace"],
+		},
+	}
+	listPodsResult, err := b.service.ExecuteAction(c.Get("ctx").(context.Context), listPodsReq)
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Ошибка: %v", err)})
+	}
+	return b.showDynamicResourceList(c, uint(incidentID), listPodsResult)
 }
 
 func (b *Bot) formatIncidentMessage(incident *models.Incident, historyVisible bool) string {

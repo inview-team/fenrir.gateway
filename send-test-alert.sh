@@ -1,16 +1,12 @@
 #!/bin/bash
 
-# Скрипт для отправки тестового вебхука от Alertmanager на локальный сервер.
-# Позволяет имитировать создание инцидента без настройки реального Alertmanager.
-
-# --- Конфигурация ---
+# --- Configuration ---
 HOST="localhost"
-PORT=${ALERT_PORT:-8081} # Используем переменную окружения ALERT_PORT или 8081 по умолчанию
-TOKEN=${WEBHOOK_TOKEN:-"secret"} # Используем WEBHOOK_TOKEN или "secret" по умолчанию
+PORT=${ALERT_PORT:-8081}
+TOKEN=${WEBHOOK_TOKEN:-"secret"}
+DEPLOYMENT_NAME=${1:-"frontend"} # Default to "frontend" if no argument is provided
 
 # --- JSON Payload ---
-# Этот JSON имитирует алерт о несоответствии количества реплик деплоймента.
-# Он должен триггерить ActionSuggester и создать инцидент с предложенными действиями.
 JSON_PAYLOAD=$(cat <<EOF
 {
   "version": "4",
@@ -21,13 +17,13 @@ JSON_PAYLOAD=$(cat <<EOF
       "fingerprint": "$(date +%s)-${RANDOM}",
       "labels": {
         "alertname": "KubeDeploymentReplicasMismatch",
-        "deployment": "payment-gateway",
-        "namespace": "production",
+        "deployment": "${DEPLOYMENT_NAME}",
+        "namespace": "guestbook",
         "severity": "critical"
       },
       "annotations": {
-        "summary": "Deployment replicas mismatch for payment-gateway",
-        "description": "Deployment production/payment-gateway has 0/1 ready replicas."
+        "summary": "Deployment replicas mismatch for ${DEPLOYMENT_NAME}",
+        "description": "Deployment guestbook/${DEPLOYMENT_NAME} has 0/1 ready replicas."
       },
       "startsAt": "$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")",
       "endsAt": "0001-01-01T00:00:00Z"
@@ -37,11 +33,11 @@ JSON_PAYLOAD=$(cat <<EOF
 EOF
 )
 
-# --- Выполнение запроса ---
-echo "Sending test alert to http://${HOST}:${PORT}/api/v1/alertmanager"
+# --- Execution ---
+echo "Sending test alert for ${DEPLOYMENT_NAME} to http://${HOST}:${PORT}/api/v1/alertmanager"
 echo "Using token: ${TOKEN}"
 echo "Payload:"
-echo "${JSON_PAYLOAD}" | jq . # Выводим для наглядности
+echo "${JSON_PAYLOAD}" | jq .
 
 curl -X POST \
   -H "Content-Type: application/json" \

@@ -1,36 +1,31 @@
 package http
 
-import "chatops-bot/internal/models"
-
-// ExecuteActionRequest is the request body for the ExecuteAction endpoint.
-type ExecuteActionRequest struct {
-	Action     string            `json:"action"`
-	IncidentID uint              `json:"incident_id"`
-	UserID     uint              `json:"user_id"`
-	Parameters map[string]string `json:"parameters"`
+type Pod struct {
+	Name      string                `json:"name"`
+	Status    string                `json:"status"`
+	Restarts  int                   `json:"restarts"`
+	Age       string                `json:"age"`
+	Resources []*ContainerResources `json:"resources"`
 }
 
-// ExecuteActionResponse is the response body for the ExecuteAction endpoint.
-type ExecuteActionResponse struct {
-	Result models.ActionResult `json:"result"`
+type ContainerResources struct {
+	Name         string `json:"name"`
+	CpuUsage     int64  `json:"cpuUsage"`
+	MemoryUsage  int64  `json:"memoryUsage"`
+	CpuLimits    int64  `json:"cpuLimits"`
+	MemoryLimits int64  `json:"memoryLimits"`
 }
 
-// ResourceDetailsRequest is the request body for the ResourceDetails endpoint.
-type ResourceDetailsRequest struct {
-	IncidentID   uint              `json:"incident_id"`
-	ResourceType string            `json:"resource_type"`
-	ResourceName string            `json:"resource_name"`
-	Labels       map[string]string `json:"labels"`
+type Pods struct {
+	Pods []DeploymentPod `json:"pods"`
 }
 
-// ResourceDetailsResponse is the response body for the ResourceDetails endpoint.
-type ResourceDetailsResponse struct {
-	Details *models.ResourceDetails `json:"details,omitempty"`
-	Error   string                  `json:"error,omitempty"`
+type DeploymentPod struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
-// AvailableResourcesResponse is the response body for the AvailableResources endpoint.
-type AvailableResourcesResponse struct {
-	Resources *models.AvailableResources `json:"resources,omitempty"`
-	Error     string                     `json:"error,omitempty"`
+type Deployment struct {
+	Name     string `json:"name"`
+	Replicas int    `json:"replicas"`
 }

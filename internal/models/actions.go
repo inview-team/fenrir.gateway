@@ -20,8 +20,9 @@ const (
 	ActionListPodsForDeployment ActionType = "list_pods_for_deployment"
 
 	// Действия по управлению ресурсами
-	ActionAllocateHardware ActionType = "allocate_hardware"
-	ActionGetPodInfo       ActionType = "get_pod_info"
+	ActionAllocateHardware  ActionType = "allocate_hardware"
+	ActionGetPodInfo        ActionType = "get_pod_info"
+	ActionGetDeploymentInfo ActionType = "get_deployment_info"
 )
 
 // ActionResult представляет стандартизированный результат выполнения действия.

@@ -92,7 +92,7 @@ func (m *ExecutorClientMock) GetResourceDetails(req models.ResourceDetailsReques
 	case "pod":
 		return &models.ResourceDetails{
 			Status:    "Running",
-			Restarts:  "2",
+			Restarts:  2,
 			Age:       "4h",
 			RawOutput: fmt.Sprintf("Details for pod %s", req.ResourceName),
 		}, nil

@@ -12,7 +12,7 @@ type ResourceDetailsRequest struct {
 type ResourceDetails struct {
 	Status       string `json:"status"`
 	ReplicasInfo string `json:"replicas_info,omitempty"`
-	Restarts     string `json:"restarts,omitempty"`
+	Restarts     int    `json:"restarts,omitempty"`
 	Age          string `json:"age"`
 	RawOutput    string `json:"raw_output"`
 }

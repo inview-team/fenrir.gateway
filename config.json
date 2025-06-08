@@ -8,8 +8,8 @@
     "webhook_token": ""
   },
   "executor": {
-    "use_mock": true,
-    "base_url": "http://localhost:8082"
+    "use_mock": false,
+    "base_url": "http://localhost:30000"
   },
   "telegram": {
     "alert_channel_id": -1002653225718
